@@ -1,3 +1,4 @@
 # quench_detector
-Software for processing, characterization, and trigger algorithms for quench detection in training 
+Software for data driven simulation, processing, and ML based trigger algorithms for quench detection in training 
 
+(Dataflow diagram to come here)
