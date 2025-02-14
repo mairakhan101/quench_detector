@@ -98,10 +98,19 @@ def generate_synthetic_acoustic(signal, sample_rate):
     simulated_integral = np.sum(np.abs(sim_sig))
     residual_energy = actual_integral - simulated_integral
     print(actual_integral)
-    
-    if residual_energy <= 0:
-        print("Simulated signal already has equal or more integral energy. No adjustment needed.")
-        return sim_sig
+    #
+    if simulated_integral > actual_integral:
+        scale_factor = 0.99  # Start with 99% and decrease gradually
+
+        while simulated_integral > actual_integral and residual_energy < -1:
+            sim_sig[0:end_indx] *= scale_factor  # Scale down
+            simulated_integral = np.sum(np.abs(sim_sig))  # Recalculate
+            residual_energy = actual_integral - simulated_integral
+            print(f"Scaling down: New Integral = {simulated_integral}, Residual = {residual_energy}")
+
+        if residual_energy >= -2:  # Stop once within acceptable range
+            print("Simulated signal scaled down successfully.")
+            return sim_sig 
     
     # Choose ratio of Log-Normal vs White Noise
     log_normal_ratio = np.random.uniform(0.3, 0.7)  # 30-70% log-normal noise
@@ -156,12 +165,13 @@ def generate_synthetic_acoustic(signal, sample_rate):
     print(f"Final Residual: {final_residual} (Target: within ±{epsilon})")  
 
     return adjusted_signal
-
+    
 # Example Usage
 if __name__ == "__main__":
     sample_rate = 1e5  # Hz
-    time = a[0]
-    original_signal = a[1]
+    
+    time = sig[0]
+    original_signal = sig[1]
 
     synthetic_signal = generate_synthetic_acoustic(original_signal, sample_rate)
 
