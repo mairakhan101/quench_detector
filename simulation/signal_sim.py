@@ -2,6 +2,8 @@ import numpy as np
 from scipy.fft import fft, ifft
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
+import glob
+import os
 
 def exp_decay(t, A0, alpha):
     """Exponential decay function for fitting."""
@@ -18,12 +20,17 @@ def fit_exponential_envelope(signal, sample_rate):
 
     peaks = []
     for i in range(0, len(sorted_diff_indices)): 
-        if np.abs(sorted_diff_indices[i] - peak_idx) > 40:
+        if np.abs(sorted_diff_indices[i] - peak_idx) > 200:
             if sorted_diff_indices[i] > peak_idx:
                 peaks.append(sorted_diff_indices[i])
     
     A0 = peak_value
-    end_indx = peaks[0]
+    if len(peaks)>0:
+        end_indx = peaks[0]
+    else: 
+        end_indx = len(signal)
+        # fix this condtion 
+        
     # Fit the decay using data after the peak
     t_decay = time[peak_idx:end_indx]
     envelope = np.abs(signal[peak_idx:end_indx])
@@ -166,18 +173,27 @@ def generate_synthetic_acoustic(signal, sample_rate):
 
     return adjusted_signal
     
+    
 # Example Usage
 if __name__ == "__main__":
     sample_rate = 1e5  # Hz
+    num_samples = 200
+    e_dir = '/home/maira/Magnets/code_revamp/early_events/'
+    p_dir = '/home/maira/Magnets/code_revamp/precursors/'
     
-    time = sig[0]
-    original_signal = sig[1]
+    
+    
+    npy_files = glob.glob(os.path.join(p_dir, '*.npy'))
+    for file_path in npy_files:
+        sig = np.load(file_path)
+        time = sig[0]
+        curr = sig[1]
+        original_signal = sig[2]
+        synthetic_signal = generate_synthetic_acoustic(original_signal, sample_rate)
 
-    synthetic_signal = generate_synthetic_acoustic(original_signal, sample_rate)
-
-    # Plot for comparison
-    plt.figure(figsize=(10, 5))
-    plt.plot(time, original_signal, label="Original Signal", alpha=0.7)
-    plt.plot(time, synthetic_signal, label="Synthetic Signal", linestyle="dashed")
-    plt.legend()
-    plt.show()
+        # Plot for comparison
+        plt.figure(figsize=(10, 5))
+        plt.plot(time, original_signal, label="Original Signal", alpha=0.7)
+        plt.plot(time, synthetic_signal, label="Synthetic Signal", linestyle="dashed")
+        plt.legend()
+        plt.show()
