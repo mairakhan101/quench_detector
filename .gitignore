@@ -1,0 +1,16 @@
+
+# --- research workflow defaults ---
+data/
+*.h5
+*.root
+*.ckpt
+*.pt
+*.onnx
+checkpoints/
+wandb/
+runs/
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
