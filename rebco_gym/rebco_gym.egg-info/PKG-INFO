@@ -1,0 +1,171 @@
+Metadata-Version: 2.4
+Name: rebco-gym
+Version: 0.1.0
+Summary: Farama Gymnasium environments for REBCO tape quench protection and current redistribution
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: gymnasium>=0.29.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.10
+Provides-Extra: train
+Requires-Dist: stable-baselines3>=2.0; extra == "train"
+Requires-Dist: torch>=2.0; extra == "train"
+Provides-Extra: viz
+Requires-Dist: matplotlib>=3.7; extra == "viz"
+
+# REBCO-Gym
+
+Farama Gymnasium environments for reinforcement learning-based quench protection and current redistribution control in REBCO (Rare-Earth Barium Copper Oxide) high-temperature superconducting tapes.
+
+## Physics Background
+
+These environments implement models from two domains:
+
+### 1. Thermal Runaway Criterion (Marchevsky & Prestemon, 2024)
+
+Based on: *"Thermal runaway criterion as a basis for the protection of high-temperature superconductor magnets"*, Supercond. Sci. Technol. 37, 2024. DOI: [10.1088/1361-6668/ad20fe](https://doi.org/10.1088/1361-6668/ad20fe)
+
+The key insight: HTS conductors can tolerate minor heating without quenching. There exists a **runaway current I\*** above which no stable thermal equilibrium exists — the conductor will inevitably quench. Below I\*, a stable equilibrium temperature T\* exists where Joule heating balances cooling.
+
+The model implements:
+- **Case 1** (no stabilizer): Power-law E(J) characteristic with linear cooling
+- **Case 2** (with Cu/SS stabilizer): Current sharing between SC and normal metal layers
+
+### 2. Quench Antenna (QA) Voltage Response
+
+Simulates the voltage signal from a multipole quench antenna responding to local flux disturbances caused by normal zone formation. Uses complex potential theory with dipole source representation.
+
+### 3. Current Redistribution Mesh
+
+A 2D resistor-network model of the REBCO tape cross-section (0.5mm mesh, matching COMSOL discretization) with 7 material layers: Cu stabilizer, Ag overlayer, REBCO, buffer, Hastelloy substrate, Ag, Cu. Models current redistribution when local regions go normal.
+
+## Environments
+
+### `ThermalRunawayEnv-v0` — Binary Protection Decision
+
+| | |
+|---|---|
+| **Action** | `Discrete(2)`: 0 = HOLD (maintain current), 1 = RAMP_DOWN |
+| **Observation** | `Box(7)`: `[T, T0, I_op, Ic(T), dT/dt, V_qa, margin]` |
+| **Reward** | +1/step operating, +5 safe ramp-down, −100 quench, −10 unnecessary ramp-down |
+| **Termination** | Quench (T > T0 + ΔT_crit) or successful ramp-down |
+
+The agent observes the thermal state and QA voltage signal, and must decide when to initiate a protective current ramp-down. Random flux disturbances inject local heating.
+
+```python
+import gymnasium as gym
+import rebco_gym
+
+env = gym.make("ThermalRunawayEnv-v0")
+obs, info = env.reset()
+
+for _ in range(500):
+    # Your RL agent here
+    T, T0, I_op, Ic_T, dTdt, V_qa, margin = obs
+    action = 1 if margin > 0.85 else 0
+
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        break
+```
+
+### `CurrentRedistEnv-v0` — Continuous Current Control with Mesh Observability
+
+| | |
+|---|---|
+| **Action** | `Box(1)`: current setpoint fraction [0, 1] |
+| **Observation** | `Box(4·nx+3)`: Ic, E-field, Jc, T profiles + V_qa + I_total + T_max |
+| **Reward** | Operational reward − temperature penalty − quench penalty + uniformity bonus |
+| **Termination** | Quench (T_max > T0 + ΔT_crit) |
+
+The agent observes the full COMSOL-style mesh distributions (Ic, E-field, Jc, temperature across tape width) and controls the current setpoint. Future versions will support per-element MOSFET current redistribution.
+
+```python
+env = gym.make("CurrentRedistEnv-v0")
+obs, info = env.reset()
+
+for _ in range(1000):
+    nx = env.unwrapped.nx
+    T_max = obs[4*nx + 2]
+    T0 = info["T0"]
+
+    # Proportional controller
+    frac = max(1.0 - (T_max - T0) / 12.0, 0.1)
+    action = np.array([frac], dtype=np.float32)
+
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        break
+```
+
+## Installation
+
+```bash
+pip install -e .
+
+# With training dependencies (stable-baselines3 + torch):
+pip install -e ".[train]"
+
+# With visualization:
+pip install -e ".[viz]"
+```
+
+## Package Structure
+
+```
+rebco_gym/
+├── __init__.py                    # Env registration
+├── physics/
+│   ├── thermal.py                 # Marchevsky thermal runaway model
+│   ├── quench_antenna.py          # QA voltage response model
+│   └── current_redistribution.py  # 2D mesh current redistribution
+└── envs/
+    ├── thermal_runaway_env.py     # ThermalRunawayEnv-v0
+    └── current_redist_env.py      # CurrentRedistEnv-v0
+examples/
+    └── run_demo.py                # Heuristic agent demos
+```
+
+## Physics Modules (Standalone Usage)
+
+The physics models can be used independently of the gym environments:
+
+```python
+from rebco_gym.physics import ThermalRunawayModel
+
+model = ThermalRunawayModel(Ic0=500, Tc=85, n_value=20)
+model.reset(T0=20.0, I_op=400.0)
+
+# Find the runaway current for given conditions
+eta = model.eta(20.0)
+I_star, T_star = model.find_runaway_current(T0=20.0, eta_val=eta)
+print(f"Runaway current: {I_star:.1f} A at T*={T_star:.1f} K")
+```
+
+```python
+from rebco_gym.physics import CurrentRedistributionMesh
+
+mesh = CurrentRedistributionMesh(tape_width=4e-3, dx=0.5e-3, I_total=400, T_base=20)
+mesh.set_hotspot(x_center=2e-3, width=1e-3, T_hot=60)
+mesh.step(dt=0.001)
+
+print("REBCO current fraction:", mesh.get_rebco_current_fraction())
+print("Max temperature:", mesh.max_temperature())
+```
+
+## Roadmap
+
+- [x] `ThermalRunawayEnv-v0` — binary ramp-down decision
+- [x] `CurrentRedistEnv-v0` — continuous current control with mesh obs
+- [ ] Per-element MOSFET action space (Marchevsky active current redistribution)
+- [ ] Coupled thermal + electromagnetic environment (`REBCOFullEnv-v0`)
+- [ ] COMSOL LiveLink integration for high-fidelity mesh import
+- [ ] Multi-agent: one agent per tape in a cable stack
+- [ ] Field-angle-dependent Jc(B,θ) and n(B,θ)
+
+## References
+
+1. M. Marchevsky, S. Prestemon, "Thermal runaway criterion as a basis for the protection of high-temperature superconductor magnets", Supercond. Sci. Technol. 37 (2024)
+2. M. Marchevsky, S. Prestemon, "Quench protection for high-temperature superconductor cables using active control of current distribution", Supercond. Sci. Technol. 37 085026 (2024)
+3. Farama Foundation, Gymnasium, https://gymnasium.farama.org
