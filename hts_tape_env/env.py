@@ -6,8 +6,14 @@ Gymnasium environment for HTS magnet quench detection.
 The agent observes four live instrument channels — (T0, I, V, T_surface) —
 and must decide at each current step whether to trigger a protective dump or
 continue ramping. The physics engine is the analytic heat-balance solver from
-Marchevsky & Prestemon (2024); the surrogate trained in the notebook can later
-replace the per-step brentq calls via env.set_surrogate().
+Marchevsky & Prestemon (2024): it is always the ground truth used for reward,
+and always what generates (T_surface, voltage) each step (there is no real
+conductor to measure). A trained surrogate can be attached via
+env.set_surrogate() to additionally estimate I*/margin from the live
+telemetry alone, exactly as a deployed protection loop would have to (see
+hts_tape_env.seq_surrogates.SequenceSurrogateAdapter) — its estimate is
+exposed in info as margin_pred / I_star_pred / risk_pred, alongside the
+ground-truth margin / I_star, for baselines and agents to condition on.
 
 Episode structure
 -----------------
@@ -34,6 +40,7 @@ Reward
 Info keys
 ---------
   margin, I_star, T_star, T0, lam, I_frac, runaway (bool)
+  margin_pred, I_star_pred, risk_pred  (only present once a surrogate is attached)
 """
 
 from __future__ import annotations
@@ -128,8 +135,9 @@ class QuenchDetectorEnv(gymnasium.Env):
         self.reward_step = reward_step
         self.n_branch = n_branch
 
-        # Optional surrogate: callable (obs_array) -> I_star, replaces per-step brentq
+        # Optional surrogate: see set_surrogate() below.
         self._surrogate = None
+        self._surrogate_pred: dict | None = None
 
         # Observation: [T0, I, V, T_surface]
         obs_lo = np.array([0.0,   0.0, 0.0,   0.0], dtype=np.float32)
@@ -144,18 +152,41 @@ class QuenchDetectorEnv(gymnasium.Env):
         self._T_star: float = 0.0
         self._I_frac: float = 0.0
         self._last_obs: np.ndarray = np.zeros(4, dtype=np.float32)
+        self._true_I: float = 0.0
+        self._true_T_surface: float = 0.0
+        self._true_voltage: float = 0.0
         self._rng = np.random.default_rng()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def set_surrogate(self, surrogate):
         """
-        Attach a trained surrogate to replace per-step brentq in _get_obs().
+        Attach a trained surrogate estimating I*/margin from live telemetry.
 
-        surrogate must implement predict(X: np.ndarray) -> np.ndarray,
-        where X has columns [T0, I, V, T_surface] and output is I_star [A].
+        `surrogate` must implement:
+            reset() -> None
+                Clear internal state (e.g. a GRU hidden state). Called once
+                at the start of every episode, from env.reset().
+            predict_step(obs: np.ndarray) -> dict
+                Given the current [T0, I, V, T_surface] reading, return at
+                least {"margin_pred": float, "I_star_pred": float}
+                (typically also "risk_pred"). Called once per env.step()
+                (and once right after reset()). NOTE: for now this is fed
+                the *noiseless* channel (env's info["I_true_A"] etc.), not
+                the noisy `obs` the agent sees -- isolating the sequence-to-
+                I* mapping from instrument noise until that's tackled on
+                purpose. Train against hts_tape_env.seq_data.TRUE_FEATURES.
+
+        The physics engine still generates the ground-truth (T_surface,
+        voltage) and the ground-truth margin/I_star used for reward — the
+        surrogate only adds its own estimate to info, for a baseline or agent
+        to condition on instead of doing brentq itself.
+
+        See hts_tape_env.seq_surrogates.SequenceSurrogateAdapter for a
+        ready-made adapter around a trained GRUSurrogate/TransformerSurrogate.
         """
         self._surrogate = surrogate
+        self._surrogate_pred = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -180,14 +211,37 @@ class QuenchDetectorEnv(gymnasium.Env):
                 Ic0=self.Ic0, Tc=self.Tc, n_branch=self.n_branch,
             )
 
-        self._T0 = T0
-        self._lam = lam
+        return self._begin_episode(T0, lam, I_star, T_star)
+
+    def reset_at(self, T0: float, lam: float, seed=None):
+        """
+        Deterministic reset at a specific (T0, lambda), bypassing the random
+        sampling in reset(). Not part of the Gymnasium API — used to evaluate
+        a surrogate against an exact point on the analytic runaway surface
+        (see hts_tape_env.rollout.generate_grid_dataset).
+        """
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+
+        I_star, T_star = solve_runaway(
+            T0, self.n, mode=self.mode, lam_override=lam,
+            Ic0=self.Ic0, Tc=self.Tc, n_branch=self.n_branch,
+        )
+        return self._begin_episode(T0, lam, I_star, T_star)
+
+    def _begin_episode(self, T0: float, lam: float, I_star: float, T_star: float):
+        """Shared tail of reset()/reset_at(): set state, compute obs, prime the surrogate."""
+        self._T0 = float(T0)
+        self._lam = float(lam)
         self._I_star = float(I_star)
         self._T_star = float(T_star)
         self._I_frac = self.I_start_frac
 
         obs = self._get_obs()
         self._last_obs = obs
+        if self._surrogate is not None:
+            self._surrogate.reset()
+            self._surrogate_pred = self._surrogate.predict_step(self._true_obs_vector())
         return obs, self._get_info()
 
     def step(self, action: int):
@@ -196,6 +250,8 @@ class QuenchDetectorEnv(gymnasium.Env):
 
         obs = self._get_obs()
         self._last_obs = obs
+        if self._surrogate is not None:
+            self._surrogate_pred = self._surrogate.predict_step(self._true_obs_vector())
         info = self._get_info()
 
         terminated = False
@@ -234,6 +290,15 @@ class QuenchDetectorEnv(gymnasium.Env):
         I = self._I_frac * self._I_star
         T_surf, V = self._physics_obs(I)
 
+        # Stash the noiseless values too -- exposed via info as I_true_A /
+        # voltage_true_V / T_surface_true_K, and what a trained surrogate is
+        # fed (see set_surrogate()). The returned `obs` below is what the
+        # *agent* sees and stays noisy; this is deliberately a separate,
+        # cleaner channel for the surrogate to learn against for now.
+        self._true_I = float(I)
+        self._true_T_surface = float(T_surf)
+        self._true_voltage = float(V)
+
         noise = self._rng.standard_normal(3)
         I_obs = float(I)      + noise[0] * self.noise_std.get("I", 0.5)
         V_obs = float(V)      + noise[1] * self.noise_std.get("V", 1e-6)
@@ -242,11 +307,16 @@ class QuenchDetectorEnv(gymnasium.Env):
         obs = np.array([self._T0, I_obs, V_obs, T_obs], dtype=np.float32)
         return np.clip(obs, self.observation_space.low, self.observation_space.high)
 
+    def _true_obs_vector(self) -> np.ndarray:
+        """[T0, I, voltage, T_surface] noiseless -- what a surrogate is fed, for now."""
+        return np.array([self._T0, self._true_I, self._true_voltage, self._true_T_surface],
+                         dtype=np.float32)
+
     def _physics_obs(self, I: float) -> tuple[float, float]:
         """Compute (T_surface, voltage) for current I."""
         T_surf = stable_surface_T(
             I, self._T0, self.n, mode=self.mode,
-            lam_override=self._lam, Ic0=self.Ic0, Tc=self.Tc,
+            lam_override=self._lam, Ic0=self.Ic0, Tc=self.Tc, T_hi=self._T_star,
         )
         if not np.isfinite(T_surf):
             T_surf = self._T0
@@ -259,7 +329,7 @@ class QuenchDetectorEnv(gymnasium.Env):
         return float(T_surf), float(V)
 
     def _get_info(self) -> dict:
-        return {
+        info = {
             "margin":  float(1.0 - self._I_frac),
             "I_star":  self._I_star,
             "T_star":  self._T_star,
@@ -267,4 +337,13 @@ class QuenchDetectorEnv(gymnasium.Env):
             "lam":     self._lam,
             "I_frac":  self._I_frac,
             "runaway": (1.0 - self._I_frac) <= 0.0,
+            # Noiseless channels (see _get_obs) -- what rollout.py records for
+            # sequence-surrogate training and what set_surrogate() feeds the
+            # surrogate, for now, instead of the noisy `obs` vector.
+            "I_true_A":         self._true_I,
+            "voltage_true_V":   self._true_voltage,
+            "T_surface_true_K": self._true_T_surface,
         }
+        if self._surrogate_pred is not None:
+            info.update(self._surrogate_pred)
+        return info

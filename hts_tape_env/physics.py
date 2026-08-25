@@ -17,6 +17,9 @@ w   = 0.004      # tape width [m]
 d   = 0.01       # cooling path depth (brass shim) [m]
 Ec  = 1e-4       # E-field criterion [V/m]
 U0  = Ec * L     # criterion voltage across full tape [V]
+Tc  = 85.0       # critical temperature [K] -- module default (paper's REBCO
+                 # tape); every function below also takes Tc as an override.
+                 # (datagen.py imports this as its TC_DEFAULT.)
 
 # Stabilizer layer thicknesses and cross-sections
 t_cu = 50e-6
@@ -183,24 +186,46 @@ def solve_runaway(T0, n, mode='stab', lam_override=None, n_branch=200,
 
 
 def stable_surface_T(I, T0, n, mode='stab', lam_override=None,
-                     Ic0=500.0, Tc=85.0):
+                     Ic0=500.0, Tc=85.0, T_hi=None):
     """
     Stable equilibrium surface temperature [K] at operating point (I, T0).
 
-    Finds the lower root of Qin(I,T) = Qout(T,T0) in (T0, Tc).
-    Returns nan if no stable root exists (I > I* runaway regime).
+    Finds the lower (stable) root of Qin(I,T) = Qout(T,T0) in (T0, T_hi).
+    Returns nan if no stable root exists there (I > I* runaway regime, or I
+    low enough that self-heating is negligible and the true root sits right
+    at T0 -- see the note below).
+
+    T_hi : upper search bound. Pass the episode's own T* (from solve_runaway)
+    here whenever you have it -- see the bug note below for why this
+    matters. Defaults to Tc if not given (the old, buggy default -- kept
+    only for callers with no T* on hand; prefer passing it).
+
+    Bug note (found via tests/test_physics.py, fixed here): earlier versions
+    of this function always bracketed brentq at (T0, Tc), reasoning "f(Tc) =
+    0 - Qout < 0 always" -- but Qin(I,T) DIVERGES as T -> Tc (Ic(T) -> 0 in
+    the denominator of the power law), so f(Tc-eps) is actually large and
+    POSITIVE, same sign as f(T0). Qin(I,T) is not monotonic in between: it
+    dips negative around the true stable root, then back positive past the
+    unstable root near T* -- so with same-sign endpoints, brentq silently
+    failed to bracket EITHER root about 40% of the time for mode='stab'
+    across a random (T0, lambda, I/I*) sweep, and callers (env.py) fell back
+    to reporting T_surface=T0 (no self-heating) when a real, larger
+    self-heated equilibrium existed. Bounding to T_hi=T* instead (the
+    unstable root -- always > the stable root we actually want) fixes the
+    sign mismatch and drops the failure rate to ~4% (the residual cases are
+    genuinely at-or-below the self-heating noise floor, where T~=T0 is the
+    physically correct answer, not a solver failure).
     """
     qin = _Qin(mode)
+    hi = (Tc if T_hi is None else min(float(T_hi), Tc)) - 1e-4
 
     def f(T):
         return qin(float(I), T, n, Ic0=Ic0, Tc=Tc) - float(Qout(T, T0, lam_override=lam_override))
 
-    # f(T0) = Qin(I, T0) - 0 > 0 always
-    # f(Tc-eps) → 0 - Qout < 0 always
-    # So there is always a root — but above I* it is in the unstable branch.
-    # We narrow the upper bound to T* if we have it, otherwise use Tc.
+    if hi <= T0 + 1e-4:
+        return np.nan
     try:
-        return brentq(f, T0 + 1e-4, Tc - 1e-4, maxiter=100)
+        return brentq(f, T0 + 1e-4, hi, maxiter=100)
     except Exception:
         return np.nan
 

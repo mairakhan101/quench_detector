@@ -1,0 +1,14 @@
+# Surrogate-training stack for hts_tape_env.
+# Install into a venv:  python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+numpy
+scipy
+pandas
+scikit-learn
+joblib
+pyarrow          # parquet I/O for datasets
+gymnasium        # env.py
+pyyaml           # optional: config-driven runs
+torch            # seq_surrogates.py (GRU / Transformer trajectory surrogates)
+matplotlib       # scripts/train_seq_surrogate.py surface plots
+h5py             # fem_data.py -- reads the FEM sweep.h5 (RTD/voltage-tap telemetry)
+pytest           # tests/
