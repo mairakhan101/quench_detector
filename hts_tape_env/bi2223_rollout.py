@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 from hts_tape_env.physics_bi2223 import solve_runaway, stable_surface_T, tape_voltage
+from hts_tape_env.thermal_bi2223 import time_margin_to_safe
 
 
 def rollout_bi2223_episode(T0: float, *, ramp_rate: float = 0.01,
@@ -71,6 +72,13 @@ def rollout_bi2223_episode(T0: float, *, ramp_rate: float = 0.01,
         ))
         step += 1
         frac += ramp_rate
+
+    if rows:
+        tm_s = time_margin_to_safe(Istar, Tstar)
+        tm_ms = float(tm_s * 1000.0) if np.isfinite(tm_s) else np.nan
+        for r in rows:
+            r["time_margin_ms"] = tm_ms
+
     return rows
 
 

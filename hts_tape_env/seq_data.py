@@ -72,7 +72,7 @@ class EpisodeSequenceDataset(Dataset):
                 istar = float(np.log(max(istar, 1e-6)))
             tstar = float(g["Tstar_K"].iloc[0])
 
-            tm_ms = float(g["time_margin_ms"].iloc[0])
+            tm_ms = float(g["time_margin_ms"].iloc[0]) if "time_margin_ms" in g.columns else np.nan
             tm_valid = np.isfinite(tm_ms)
             if not tm_valid:
                 n_no_time_margin += 1

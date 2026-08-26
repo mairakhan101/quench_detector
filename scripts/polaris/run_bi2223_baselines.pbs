@@ -1,0 +1,44 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q prod
+#PBS -l select=1
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -N bi2223_baselines
+#PBS -j oe
+
+# Bi-2223 Phase 1 baseline surrogates — train all models, save to Eagle.
+#
+# Submit from the repo root:
+#   cd /home/$USER/quench_detector
+#   qsub scripts/polaris/run_bi2223_baselines.pbs
+
+set -euo pipefail
+
+module use /soft/modulefiles
+module load conda/2024-04-29
+conda activate quench_surr
+
+cd "${PBS_O_WORKDIR:-$HOME/quench_detector}"
+
+OUT_DIR="/eagle/fanc_ldrd/magnets_fem/bi2223_baselines"
+mkdir -p "$OUT_DIR"
+
+echo "=== Bi-2223 baseline training ==="
+echo "Host: $(hostname)"
+echo "Date: $(date)"
+echo "Out:  $OUT_DIR"
+echo ""
+
+python scripts/train_eval_bi2223_surrogates.py \
+    --epochs 60 \
+    --arch gru transformer \
+    --n-eval-points 25 \
+    --n-datagen 3000 \
+    --out-dir "$OUT_DIR"
+
+echo ""
+echo "=== Output files ==="
+ls -lh "$OUT_DIR"/bi2223_*
+echo ""
+echo "Done: $(date)"
