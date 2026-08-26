@@ -6,6 +6,7 @@ data/
 *.ckpt
 *.pt
 *.onnx
+*.joblib
 checkpoints/
 wandb/
 runs/
