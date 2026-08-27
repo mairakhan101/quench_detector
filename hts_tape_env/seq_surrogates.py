@@ -139,12 +139,90 @@ class TransformerSurrogate(nn.Module):
         }
 
 
+class S4DBlock(nn.Module):
+    """Single diagonal state-space layer (S4D-Lin variant).
+
+    Recurrence: h_t = A * h_{t-1} + B * x_t,  y_t = Re(C * h_t) + D * x_t
+    where A is a complex diagonal initialized on the negative real half-plane
+    (HiPPO-inspired). Pure PyTorch, no custom CUDA kernels.
+    """
+
+    def __init__(self, d_model: int, d_state: int = 64, dropout: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state
+        log_dt = torch.rand(d_model) * (np.log(0.1) - np.log(0.001)) + np.log(0.001)
+        self.log_dt = nn.Parameter(log_dt)
+        A_real = -0.5 * torch.ones(d_model, d_state)
+        A_imag = torch.arange(d_state).float().unsqueeze(0).expand(d_model, -1) * np.pi
+        self.A_real = nn.Parameter(A_real)
+        self.A_imag = nn.Parameter(A_imag)
+        self.B_re = nn.Parameter(torch.randn(d_model, d_state) * 0.02)
+        self.B_im = nn.Parameter(torch.randn(d_model, d_state) * 0.02)
+        self.C_re = nn.Parameter(torch.randn(d_model, d_state) * 0.02)
+        self.C_im = nn.Parameter(torch.randn(d_model, d_state) * 0.02)
+        self.D = nn.Parameter(torch.ones(d_model))
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x: torch.Tensor, lengths: torch.Tensor | None = None) -> torch.Tensor:
+        """x: [B, T, d_model] -> [B, T, d_model]"""
+        B, T, _ = x.shape
+        dt = self.log_dt.exp()
+        A = torch.complex(self.A_real, self.A_imag)
+        dA = torch.exp(A * dt.unsqueeze(-1))           # [d_model, d_state]
+        B_c = torch.complex(self.B_re, self.B_im)
+        dB = B_c * dt.unsqueeze(-1)                    # [d_model, d_state]
+        C_c = torch.complex(self.C_re, self.C_im)
+
+        h = torch.zeros(B, self.d_model, self.d_state, dtype=torch.cfloat, device=x.device)
+        ys = []
+        for t in range(T):
+            h = dA.unsqueeze(0) * h + dB.unsqueeze(0) * x[:, t, :].unsqueeze(-1).to(torch.cfloat)
+            y_t = (C_c.unsqueeze(0) * h).sum(-1).real + self.D.unsqueeze(0) * x[:, t]
+            ys.append(y_t)
+        y = torch.stack(ys, dim=1)
+        return self.norm(self.dropout(y) + x)
+
+
+class SSMSurrogate(nn.Module):
+    """State-space model surrogate using stacked diagonal S4D blocks."""
+
+    def __init__(self, n_features: int = 4, hidden: int = 64, n_layers: int = 2,
+                 d_state: int = 64, dropout: float = 0.1):
+        super().__init__()
+        self.in_proj = nn.Linear(n_features, hidden)
+        self.blocks = nn.ModuleList([S4DBlock(hidden, d_state, dropout) for _ in range(n_layers)])
+        self.margin_head = nn.Linear(hidden, 1)
+        self.breach_head = nn.Linear(hidden, 1)
+        self.istar_head = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+        self.tstar_head = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+        self.time_margin_head = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+
+    def forward(self, X: torch.Tensor, lengths: torch.Tensor) -> dict:
+        B, T, _ = X.shape
+        h = self.in_proj(X)
+        for block in self.blocks:
+            h = block(h, lengths)
+        idx = (lengths - 1).clamp(min=0).to(X.device)
+        h_last = h[torch.arange(B, device=X.device), idx]
+        return {
+            "margin": self.margin_head(h).squeeze(-1),
+            "breach_logit": self.breach_head(h).squeeze(-1),
+            "istar_log": self.istar_head(h_last).squeeze(-1),
+            "tstar": self.tstar_head(h_last).squeeze(-1),
+            "time_margin_log": self.time_margin_head(h_last).squeeze(-1),
+        }
+
+
 def build_model(arch: str, **kwargs) -> nn.Module:
     if arch == "gru":
         return GRUSurrogate(**kwargs)
     if arch == "transformer":
         return TransformerSurrogate(**kwargs)
-    raise KeyError(f"unknown arch '{arch}', expected 'gru' or 'transformer'")
+    if arch == "ssm":
+        return SSMSurrogate(**kwargs)
+    raise KeyError(f"unknown arch '{arch}', expected 'gru', 'transformer', or 'ssm'")
 
 
 # ── Train / evaluate / persist ────────────────────────────────────────────────

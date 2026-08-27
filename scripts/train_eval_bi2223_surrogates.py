@@ -49,8 +49,8 @@ from hts_tape_env.seq_surrogates import predict_episode, train_seq_surrogate  # 
 from hts_tape_env.surrogates import train_spec  # noqa: E402
 from hts_tape_env.thermal_bi2223 import time_margin_to_safe  # noqa: E402
 
-SEQ_COLORS = {"gru": "tab:blue", "transformer": "tab:orange"}
-SEQ_MARKERS = {"gru": "^", "transformer": "v"}
+SEQ_COLORS = {"gru": "tab:blue", "transformer": "tab:orange", "ssm": "tab:red"}
+SEQ_MARKERS = {"gru": "^", "transformer": "v", "ssm": "D"}
 
 
 def _make_main_figure(T0_eval, Istar_analytic, Tstar_analytic, tm_analytic_ms,
@@ -260,9 +260,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--n-datagen", type=int, default=3000)
-    ap.add_argument("--n-rollout-points", type=int, default=20)
-    ap.add_argument("--arch", nargs="+", choices=["gru", "transformer"],
-                    default=["gru", "transformer"])
+    ap.add_argument("--n-rollout-points", type=int, default=5000)
+    ap.add_argument("--arch", nargs="+", choices=["gru", "transformer", "ssm"],
+                    default=["gru", "transformer", "ssm"])
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--n-eval-points", type=int, default=25)
