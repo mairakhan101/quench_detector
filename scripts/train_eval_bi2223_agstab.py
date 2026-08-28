@@ -115,7 +115,7 @@ def main():
         seed=args.seed + 1000,
     )
 
-    for arch in ["gru", "transformer"]:
+    for arch in ["gru", "transformer", "ssm"]:
         print(f"\n  Training {arch}...")
         try:
             result = train_seq_surrogate(

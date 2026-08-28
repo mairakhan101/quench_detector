@@ -275,7 +275,7 @@ def train_seq_surrogate(
     margin_weight: float = 1.0,
     breach_weight: float = 1.0,
     istar_weight: float = 1.0,
-    tstar_weight: float = 0.3,
+    tstar_weight: float = 0.0,
     time_margin_weight: float = 0.3,
     margin_loss_weighting: str = "boundary",
     boundary_tau: float = 0.05,

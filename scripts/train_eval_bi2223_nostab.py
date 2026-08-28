@@ -82,7 +82,7 @@ def main():
     # ── 4. Train sequence surrogates ────────────────────────────────────
     print("\n=== 4. Training sequence surrogates ===")
     seq_results = {}
-    for arch in ["gru", "transformer"]:
+    for arch in ["gru", "transformer", "ssm"]:
         print(f"\n  Training {arch}...")
         try:
             result = train_seq_surrogate(
