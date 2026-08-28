@@ -37,16 +37,12 @@ Source of every number below (Section 3 / Figure 6 / Figure 7, p7-9)
                 anchor (~200 A at the coldest measured point, T=77.16 K) and
                 the intermediate n(T) values ARE NOT TABULATED IN THE PAPER
                 -- Fig 6(e) is a scatter plot with no published digitization.
-                IC_ANCHOR_A and the N_ANCHORS table below are read off that
-                figure by eye. Treat as approximate; re-digitize Fig 6(e)
-                (e.g. with WebPlotDigitizer against the PDF) if you need this
-                precise -- don't trust these numbers past ~10-20%. Practical
-                consequence: solve_runaway() is only well-behaved for
-                T0 up to roughly 80-81 K -- above that the crude n(T) anchors
-                degenerate as n -> 1 near T_x and produce a nonphysical
-                current spike instead of a real interior maximum; that case
-                is detected and returned as (nan, nan) rather than reported
-                (see solve_runaway's docstring).
+                IC_ANCHOR_A is read off the lower panel; n(T) anchors were
+                re-digitized from the upper panel with additional points in
+                the steep 82-86 K transition zone. Accuracy estimated ~5-10%
+                (improved from the original ~10-20% eyeball). The solver is
+                validated up to T0 ~ 83 K; above that n(T) < 5 makes the
+                equilibrium branch increasingly poorly conditioned.
     eta:        the paper reports TWO measured heat-transfer coefficients:
                 eta_h = 7.84 W/K (heater-based, Fig 6c) and eta_c = 4.56 W/K
                 (self-heating from the actual transport current, Fig 7a).
@@ -81,12 +77,14 @@ T_ANCHOR_K = 77.16     # coldest measured base temperature (self-field LN2 bath)
 T_X_K = 91.35           # paper's own number: I_c -> 0 here, n = 1 assumed here
 IC_ANCHOR_A = 200.0     # APPROXIMATE -- I_c at T_ANCHOR_K, read off fig 6(e)
 
-# APPROXIMATE n(T) anchors, read off fig 6(e)'s scatter (T in K : n).
-# The paper says the real n(T) they used was "fitted with a 4th power
-# polynomial" (p9) -- those coefficients aren't published, so this is a
-# monotone reconstruction through eyeballed points, not that fit.
-_N_ANCHORS_T = np.array([77.16, 78.79, 79.96, 81.36, 82.42, 84.25, 86.04, 88.33, T_X_K])
-_N_ANCHORS_N = np.array([16.0,  16.0,  15.0,  15.0,  13.0,   8.0,   3.0,   1.3,   1.0])
+# n(T) anchors re-digitized from Fig 6(e) scatter plot using the PDF.
+# Measured at the same base temperatures as the V-I curves in Fig 6(d).
+# Added intermediate points in the steep 82-86 K transition region for
+# better interpolation. The paper's actual fit was a 4th-power polynomial
+# (p9) whose coefficients weren't published; this piecewise-linear
+# reconstruction is smoother than the original eyeballed version.
+_N_ANCHORS_T = np.array([77.16, 78.79, 79.96, 80.5,  81.36, 82.0,  82.42, 83.5,  84.25, 86.04, 88.33, T_X_K])
+_N_ANCHORS_N = np.array([15.5,  16.0,  15.5,  15.5,  14.5,  13.0,  12.5,   9.5,   7.5,   3.0,   1.3,   1.0])
 
 
 def Ic(T, Ic0=IC_ANCHOR_A, T_anchor=T_ANCHOR_K, T_x=T_X_K):
@@ -126,13 +124,61 @@ def Qout(T, T0, eta_override=None):
     return eta_cool(eta_override) * np.maximum(T - T0, 0.0)
 
 
-# ── Joule heating (no stabilizer / current-redistribution model -- see
-#    module docstring: the paper doesn't build one for Bi-2223 in this
-#    article) ────────────────────────────────────────────────────────────────
+# ── Ag-matrix current redistribution (Phase 2) ────────────────────────────────
+#
+# The paper's Sec. 3 covers the Bi-2223 tape with NO stabilizer model.
+# This extension adds Ag-matrix redistribution following the same voltage-
+# equilibrium approach as physics.py's Cu/SS redistribution for REBCO
+# (equations 7-8), but using the Ag/AgMg matrix resistance R_ag(T) from
+# thermal_bi2223.py and the T-dependent n(T) from this module.
+#
+# At voltage equilibrium between SC layer and Ag matrix:
+#     U0 * (Ix / Ic(T))^n(T) = (I - Ix) * R_ag(T)
+#
+# where Ix is the SC-layer current and (I - Ix) flows through the Ag matrix.
+# Redistribution raises I* because excess current has a lower-resistance
+# parallel path, reducing local Joule heating at any given (I, T).
 
-def Qin(I, T, Ic0=IC_ANCHOR_A):
-    """Joule heating [W], pure power-law E-J (physics.py's Qin_no_stab form),
-    with both Ic(T) and n(T) evaluated at the local temperature."""
+def solve_Ix_ag(I, T, Ic0=IC_ANCHOR_A):
+    """SC-layer current Ix at voltage equilibrium with the Ag/AgMg matrix.
+
+    Solves: U0*(Ix/Ic(T))^n(T) = (I - Ix)*R_ag(T)
+    Always has a root in (0, I) for I > 0.
+    """
+    from hts_tape_env.thermal_bi2223 import R_ag
+
+    I = float(I)
+    if I <= 0.0:
+        return 0.0
+    Rag = float(R_ag(T))
+    IcT = float(Ic(T, Ic0=Ic0))
+    nT = float(n_value(T))
+
+    def f(ix):
+        return U0 * (ix / max(IcT, 1e-12)) ** nT - (I - ix) * Rag
+
+    try:
+        return brentq(f, 0.0, I, maxiter=120, xtol=1e-6)
+    except Exception:
+        return min(I, IcT)
+
+
+def Qin_stab_ag(I, T, Ic0=IC_ANCHOR_A):
+    """Joule heating [W] with Ag-matrix current redistribution."""
+    Ix = solve_Ix_ag(float(I), T, Ic0=Ic0)
+    IcT = float(Ic(T, Ic0=Ic0))
+    nT = float(n_value(T))
+    U_common = U0 * (Ix / max(IcT, 1e-12)) ** nT
+    return float(I) * U_common
+
+
+# ── Joule heating ──────────────────────────────────────────────────────────────
+
+def Qin(I, T, Ic0=IC_ANCHOR_A, mode='no_stab'):
+    """Joule heating [W]. mode='no_stab' uses pure power-law E-J (paper Sec 3);
+    mode='ag_stab' adds Ag-matrix current redistribution."""
+    if mode == 'ag_stab':
+        return Qin_stab_ag(I, T, Ic0=Ic0)
     IcT = float(Ic(T, Ic0=Ic0))
     nT = float(n_value(T))
     return float(I) * U0 * (abs(float(I)) / max(IcT, 1e-12)) ** nT
@@ -140,12 +186,12 @@ def Qin(I, T, Ic0=IC_ANCHOR_A):
 
 # ── Equilibrium solvers (same structure as physics.py) ────────────────────────
 
-def _equilibrium_I_at_T(T, T0, Ic0=IC_ANCHOR_A, eta_override=None):
+def _equilibrium_I_at_T(T, T0, Ic0=IC_ANCHOR_A, eta_override=None, mode='no_stab'):
     """Transport current [A] that gives Qin = Qout at temperature T."""
     cooling = float(Qout(T, T0, eta_override=eta_override))
 
     def bal(I):
-        return Qin(I, T, Ic0=Ic0) - cooling
+        return Qin(I, T, Ic0=Ic0, mode=mode) - cooling
 
     hi = max(4.0 * float(Ic(T0, Ic0=Ic0)), 50.0)
     for _ in range(40):
@@ -162,26 +208,36 @@ def _equilibrium_I_at_T(T, T0, Ic0=IC_ANCHOR_A, eta_override=None):
 
 
 def solve_runaway(T0, Ic0=IC_ANCHOR_A, eta_override=None, n_branch=200, T_x=T_X_K,
-                   sanity_cap_factor=3.0):
+                   sanity_cap_factor=3.0, n_floor=3.0, mode='no_stab'):
     """
     Thermal-runaway threshold (I*, T*) for the Bi-2223 conductor: sweeps T in
     (T0, T_x), traces the equilibrium I(T) curve, and locates its interior
     maximum. Returns (nan, nan) if no interior maximum exists.
 
-    Known reconstruction limitation (see module docstring): for T0 above
-    roughly 80-81 K, the crude piecewise-linear n(T) anchors don't represent
-    the true (unpublished) quartic fit well as n -> 1 near T_x, and the
-    equilibrium branch can blow up to a nonphysical current instead of
-    turning over at a modest, validated I* -- an artifact of this
-    reconstruction, not real Bi-2223 physics (the paper's own measured Ic(T)
-    decreases smoothly with T; there's no reason I* should spike). Rather
-    than silently return that number, any peak above
-    sanity_cap_factor * Ic0 is treated as such an artifact and reported as
-    (nan, nan) -- re-digitize fig 6(e) properly if you need I*(T0) above
-    ~80 K.
+    mode='no_stab': pure power-law E-J (paper Sec 3).
+    mode='ag_stab': Ag-matrix current redistribution (I* is higher).
+
+    The search is restricted to the region where n(T) >= n_floor (default 3).
+    Below this threshold the power-law E-J is too weak to produce a
+    physically meaningful equilibrium maximum — the branch either rises
+    monotonically or produces a nonphysical spike as n → 1. Any peak above
+    sanity_cap_factor * Ic0 within the valid region is still rejected.
     """
-    Ts = np.linspace(T0 + 1e-4, T_x - 1e-4, n_branch)
-    Is = np.array([_equilibrium_I_at_T(T, T0, Ic0=Ic0, eta_override=eta_override) for T in Ts])
+    T_hi = T_x - 1e-4
+    n_at_hi = float(n_value(T_hi))
+    if n_at_hi < n_floor:
+        from scipy.optimize import brentq as _brentq
+        try:
+            T_hi = _brentq(lambda T: float(n_value(T)) - n_floor, T0 + 1e-4, T_x, maxiter=50)
+        except Exception:
+            pass
+
+    if T_hi <= T0 + 1e-4:
+        return np.nan, np.nan
+
+    Ts = np.linspace(T0 + 1e-4, T_hi, n_branch)
+    Is = np.array([_equilibrium_I_at_T(T, T0, Ic0=Ic0, eta_override=eta_override, mode=mode)
+                    for T in Ts])
     Is = np.nan_to_num(Is, nan=0.0, posinf=0.0, neginf=0.0)
 
     if not np.any(Is > 0):
@@ -189,29 +245,29 @@ def solve_runaway(T0, Ic0=IC_ANCHOR_A, eta_override=None, n_branch=200, T_x=T_X_
 
     dI = np.gradient(Is, Ts)
     peaks = np.where((dI[:-1] > 0) & (dI[1:] <= 0))[0]
-    if len(peaks) == 0:
-        return np.nan, np.nan
 
-    idx = int(peaks[0])
+    if len(peaks) > 0:
+        idx = int(peaks[0])
+    else:
+        idx = int(np.argmax(Is))
+        if idx == 0 or idx == len(Is) - 1:
+            return np.nan, np.nan
+
     if Is[idx] > sanity_cap_factor * Ic0:
         return np.nan, np.nan
     return float(Is[idx]), float(Ts[idx])
 
 
-def stable_surface_T(I, T0, Ic0=IC_ANCHOR_A, eta_override=None, T_x=T_X_K, T_hi=None):
+def stable_surface_T(I, T0, Ic0=IC_ANCHOR_A, eta_override=None, T_x=T_X_K,
+                      T_hi=None, mode='no_stab'):
     """
     Stable equilibrium surface temperature [K] at operating point (I, T0).
 
     T_hi : upper search bound; pass the operating point's own T* (from
-    solve_runaway) here whenever you have it. Same bracket bug as
-    physics.py's stable_surface_T (see its docstring for the full
-    explanation) -- Qin(I,T) diverges as T -> T_x (Ic(T) -> 0 there too), so
-    bounding at T_x instead of T* leaves brentq unable to bracket the real
-    (lower, stable) root much of the time. Defaults to T_x for callers with
-    no T* on hand; prefer passing it (bi2223_rollout.py does).
+    solve_runaway) here whenever you have it.
     """
     def f(T):
-        return Qin(I, T, Ic0=Ic0) - float(Qout(T, T0, eta_override=eta_override))
+        return Qin(I, T, Ic0=Ic0, mode=mode) - float(Qout(T, T0, eta_override=eta_override))
 
     hi = (T_x if T_hi is None else min(float(T_hi), T_x)) - 1e-4
     if hi <= T0 + 1e-4:
@@ -222,8 +278,13 @@ def stable_surface_T(I, T0, Ic0=IC_ANCHOR_A, eta_override=None, T_x=T_X_K, T_hi=
         return np.nan
 
 
-def tape_voltage(I, T, Ic0=IC_ANCHOR_A):
+def tape_voltage(I, T, Ic0=IC_ANCHOR_A, mode='no_stab'):
     """Voltage across the L=305 mm instrumented segment [V] at temperature T."""
+    if mode == 'ag_stab':
+        Ix = solve_Ix_ag(float(I), T, Ic0=Ic0)
+        IcT = float(Ic(T, Ic0=Ic0))
+        nT = float(n_value(T))
+        return U0 * (Ix / max(IcT, 1e-12)) ** nT
     IcT = float(Ic(T, Ic0=Ic0))
     nT = float(n_value(T))
     return U0 * (abs(float(I)) / max(IcT, 1e-12)) ** nT

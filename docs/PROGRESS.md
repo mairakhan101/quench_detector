@@ -1,6 +1,73 @@
 # Progress log
 
 <!-- newest entry on top -->
+## 2026-08-28 (3) — JAX vectorization of 1D FD solver + unified benchmark script
+- **What:** Created `hts_tape_env/physics_fd1d_jax.py` — JAX-JIT reimplementation of all material property functions (`rho_cu`, `rho_ss`, `cp_cu`, `cp_ss`, `k_cu`, `k_ss`, `Ic`), composite geometry functions (`k_eff`, `C_eff`, `G_norm`), vectorized Newton current-sharing solver, and Du Fort-Frankel step. The settle loop (n_settle_steps of current-sharing + DFF step) is fused via `jax.lax.scan` into a single XLA program. Added `backend='numpy'/'jax'` parameter to `FD1DQuenchDetectorEnv`. Created `tests/test_physics_fd1d_jax.py` (17 parity tests) and `scripts/benchmark_all_envs.py` (unified production benchmark for all 5 envs).
+- **Why:** The NumPy FD solver spends most time in per-node Python loops for material property evaluation (~10,000 scalar calls per env step). JAX eliminates this overhead by compiling the entire settle loop into one fused kernel.
+- **Result/metric:**
+  - **37x speedup**: settle loop from 86ms (NumPy) to 2.3ms (JAX) on CPU at nx=100, 20 steps
+  - All 17 parity tests pass (float64 mode) — material functions match to <1e-10 rtol, solvers to <1e-4 rtol
+  - All 80 existing tests still pass (zero regressions)
+  - JAX env end-to-end smoke test completes (trajectory gen + GRU/Transformer training)
+  - Installed `jax[cpu]==0.4.29` (Python 3.9 compatible)
+- **Next:** Run `scripts/benchmark_all_envs.py --scale production` on a compute node to get all 5 conductors at 2000 samples / 500 episodes / 200 epochs. Then FEM data pipeline.
+
+## 2026-08-28 (2) — 1D Du Fort-Frankel FD solver + FD Gymnasium environment
+- **What:** Implemented a RAPDi-like 1D finite-difference heat equation solver as an intermediate-fidelity option between the lumped analytic model and full 3D FEM. New files: `hts_tape_env/materials.py` (TapeGeometry abstraction with `lumped_rebco_tape()` and `freefem_rebco_tape()` factories), `hts_tape_env/physics_fd1d.py` (Du Fort-Frankel explicit FD solver with per-node current sharing via vectorized Newton iteration, configurable cooling models, I* binary search), `hts_tape_env/env_fd1d.py` (`FD1DQuenchDetectorEnv` — same obs/action/reward API as `env.py`), `tests/test_physics_fd1d.py` (14 tests), `tests/test_env_fd1d.py` (10 tests), `scripts/train_eval_rebco_fd1d.py` (end-to-end training pipeline).
+- **Why:** The lumped model has no spatial resolution — it cannot capture MPZ (minimum propagation zone) physics, localized hot-spot growth, or the competition between diffusion and Joule heating that determines whether a quench propagates. The FEM model requires FreeFEM installed and takes hours per operating point. This 1D FD solver captures the essential spatial dynamics in pure Python/NumPy at seconds-per-transient cost.
+- **Result/metric:**
+  - All 14 solver tests + 10 env tests pass; `gymnasium.utils.env_checker.check_env` passes
+  - Du Fort-Frankel scheme is unconditionally stable (no CFL constraint on dt/dx²)
+  - I* at 77K with bath-end cooling on L=0.2m tape: ~131A (vs lumped model NaN — FD finds stability via heat diffusion to cooled ends that the lumped model cannot represent)
+  - The FD env carries T(x) forward between steps, so thermal history matters (hot-spots persist)
+  - Two geometry presets: `'lumped'` (Cu+SS, 2-layer, matches physics.py) and `'freefem'` (7-layer, loads from local-FreeFEM data files — pure Python, no FreeFEM needed)
+- **Next:** Run full surrogate training pipeline on FD env, integrate into cross-conductor benchmark.
+
+## 2026-08-28 — Bi-2223 Ag-stab restored: AgMg resistivity fix + surrogate training
+- **What:** Discovered that the "no I* exists" finding for Bi-2223 Ag-stab was an artifact of using pure-Ag NIST resistivity (~4.2e-10 Ω·m at 77K). Real Ag/AgMg alloy has 7-12× higher ρ due to alloy scattering. Added `RHO_AG_MULTIPLIER=10.0` to `thermal_bi2223.py` (mid-range Ag-3%Mg estimate). Sensitivity sweep confirms I* reappears at multiplier ≥6×. Created `scripts/train_eval_bi2223_agstab.py` and trained full surrogate suite (point A/B/raw + GRU/Transformer) at 10× multiplier with 5000 static samples and 500 seq episodes.
+- **Why:** The paper provides no measured normal-state resistance for this conductor, and pure Ag was unrealistically conductive — the matrix shunted so effectively that no runaway boundary existed. Restoring realistic resistivity brings Environment #2 back as a trainable target with a narrower valid T0 range (77.16–79.0 K vs 77.16–81.0 K for no-stab).
+- **Result/metric:**
+  - **Point raw:** MAE 0.032 A, R²=0.99996, median rel err **0.009%**, NL-band (78–79 K) **0.010%**
+  - **Point A:** 0.011% med rel err, **Point B:** 0.80% med rel err (time-margin)
+  - **Seq Transformer:** I* med rel err **1.58%**, T* MAE **0.39 K**, NL-band **1.51%**, breach accuracy **100%**
+  - **Seq GRU:** I* med rel err **3.06%**, T* MAE **0.11 K**, NL-band **3.81%**, breach accuracy **99.5%**
+  - Bi-2223 Ag-stab is now the best-performing conductor for sequence surrogates (Transformer 1.58% vs REBCO stab 8.6%)
+  - Updated cross-conductor benchmark CSV; sensitivity analysis plot saved as `bi2223_ag_resistivity_sensitivity.png`
+- **Next:** Phase B (retrain all seq surrogates with 2000 ep / 200 epochs), Phase C (RAPDi 1D FD solver).
+
+## 2026-08-27 (3) — Phases 3+4: REBCO no-redist & Cu/SS-redist surrogates + cross-conductor benchmark
+- **What:** Created `scripts/train_eval_rebco_nostab.py` and `scripts/train_eval_rebco_stab.py` — end-to-end training pipelines for REBCO without and with Cu/SS current redistribution. Both use the existing `physics.py` with `mode='no_stab'`/`'stab'`, all 4 point surrogate specs (A, two_d, B, raw), and GRU+Transformer sequence surrogates. Created `scripts/cross_conductor_benchmark.py` producing a comparative table (CSV) and 4-panel figure across all conductors.
+- **Why:** Phases 3+4 of the 4-conductor plan. REBCO is the main conductor of interest; training both modes (no-redist = pure power-law E-J, stab = voltage-equilibrium Cu||SS sharing) provides the surrogate basis for RL controller development.
+- **Result/metric:**
+  - **REBCO no-stab point:** two_d best at 0.11% med rel err (0.48% NL band), A=2.1%, raw=1.6%
+  - **REBCO no-stab seq:** Transformer I*=13.2% med rel err, T*=0.61 K MAE, 3.1% NL band; GRU=33.3% (undertrained at 500 ep)
+  - **REBCO stab point:** two_d best at 0.19% med rel err (0.71% NL band); spec A degrades to 12.4% because it ignores λ which matters more with redistribution
+  - **REBCO stab seq:** Transformer I*=8.6% med rel err, T*=0.73 K MAE, 7.9% NL band — best absolute I* accuracy of all conductors
+  - **Cross-conductor:** Bi-2223 point surrogates are 5-50× more accurate (narrower parameter space, measured Ic/n), REBCO Transformer is better at T* prediction (0.6-0.7 K vs 62.6 K for Bi-2223 — Bi-2223's narrow T0 range makes T* prediction ill-conditioned)
+  - Bi-2223 Ag-stab: no report (no I* exists, Phase 2 finding)
+  - All model checkpoints, benchmark JSONs, diagnostic plots, and error surfaces saved under `models/`
+- **Next:** (1) Seq surrogates need 1500+ episodes for convergence (especially GRU). (2) Spec B (time-margin) is poorly learned across all conductors (R²=0.67-0.98) — may need feature engineering or a different model. (3) REBCO spec A should not be used without λ; two_d is the correct choice. (4) Ready for RL controller training against these environments.
+
+## 2026-08-27 (2) — Phase 2: Bi-2223 Ag-matrix redistribution (physics complete, no I*)
+- **What:** Added `solve_Ix_ag(I, T)` and `Qin_stab_ag(I, T)` to `physics_bi2223.py`, implementing Ag-matrix current redistribution via voltage equilibrium: `U0*(Ix/Ic(T))^n(T) = (I-Ix)*R_ag(T)`. Added `mode='no_stab'|'ag_stab'` parameter to `Qin`, `_equilibrium_I_at_T`, `solve_runaway`, `stable_surface_T`, `tape_voltage`. Updated `datagen_bi2223.py` and `env_bi2223.py` to pass mode through. Created `scripts/compare_bi2223_modes.py` with 4-panel comparison figure.
+- **Why:** Phase 2 of the 4-conductor plan. Expected to find I*(ag_stab) > I*(no_stab) at every T0.
+- **Result/metric:** **Redistribution eliminates the thermal runaway boundary entirely.** The ag-stab equilibrium branch I(T) is monotonically increasing in the physically meaningful n(T)≥3 region (77-86 K). No interior maximum exists. The Ag matrix at R_ag≈1.4e-4 Ohm shunts excess current so effectively (e.g. at I=500A, T=82K: Ix=228A stays near Ic while 272A flows through Ag) that Joule heating never exceeds cooling. The only "peak" occurs at T=89.2 K (I=4247A, n=1.2) — deep in the nonphysical regime where the power-law E-J model breaks down. Sanity checks pass: `Qin(ag_stab) < Qin(no_stab)` at all (I,T), and `solve_Ix_ag` returns Ix∈(0,I). This matches the paper's own decision to test ONLY the no-stabilizer model for Bi-2223. Surrogate training for ag_stab is not applicable — there is no I* to predict.
+- **Next:** Phase 3 (REBCO thermal no-redistribution) and Phase 4 (REBCO with Cu/SS redistribution retrain).
+
+## 2026-08-27 — Phase 0+1: Bi-2223 no-stab benchmark infrastructure + hardening
+- **What:** Built shared benchmark infrastructure (Phase 0) and hardened the Bi-2223 no-stabilizer pipeline (Phase 1). New files: `benchmark.py` (nonlinear-region metrics + 4-panel error surface plots), `env_bi2223.py` (Gymnasium env with `no_stab`/`ag_stab` modes), `rollout_bi2223_env.py` (env-based trajectory generator), `scripts/train_eval_bi2223_nostab.py` (end-to-end training + benchmarking). Modified: `physics_diagnostics.py` (added Bi-2223 curvature/sensitivity/flatness diagnostics), `physics_bi2223.py` (re-digitized n(T) with 12 anchor points including 82-86 K transition zone, added `n_floor=3.0` to `solve_runaway` to prevent nonphysical spikes), `datagen_bi2223.py` (extended T0 range to 81.0 K, overcurrent up to 1.5×Ic).
+- **Why:** Establish conductor-agnostic benchmark tooling and harden the Bi-2223 pipeline as the first of 4 planned conductor environments. The n(T) re-digitization and n_floor fix extend the valid T0 range from ~80.5 K to ~81.0 K (above 81.0 K the equilibrium branch has no interior maximum — a fundamental 1D model limitation, not a digitization issue).
+- **Result/metric:**
+  - **Point A** (T0 → I*): MAE 0.075 A, R²=0.99993, median rel err **0.024%**, NL-band err **0.021%**
+  - **Point raw** (T0,I,V,Tsurf → I*): MAE 0.070 A, median rel err **0.022%**
+  - **Point B** (T0,I → margin): MAE 0.002, median rel err 1.05%
+  - **Seq GRU** (50 episodes, 60 epochs): I* median rel err 24% (undertrained — needs 500+ episodes)
+  - **Seq Transformer**: I* median rel err 10% (also undertrained but converging faster)
+  - Error surfaces show no systematic NL-band degradation for point surrogates
+  - Overcurrent data: max I/Ic up to 1.77, time margins 1777-3560 ms
+  - All 39 tests pass (12 skipped)
+- **Next:** (1) Phase 2: Bi-2223 Ag-matrix redistribution — `solve_Ix_ag` using `R_ag(T)` from `thermal_bi2223.py`. (2) Seq surrogates need 500+ episodes for meaningful I* prediction. (3) Phase 3-4: REBCO environments.
+
 ## 2026-08-25 (4)
 - **What:** Added `hts_tape_env/bi2223_rollout.py` (Bi-2223 ramp-trajectory generator, no Gym env needed) + `scripts/plot_surrogate_bi2223.py` (REBCO-trained surrogate vs Bi-2223 ground truth), and `scripts/plot_fem_spatial.py` (spatial diagnostics from the FEM sweep: RTD-vs-x hot-spot profile, per-segment voltage-tap drop vs x, left/right asymmetry over time). Also factored the shared offline-inference forward pass out of `fem_surrogate_inference.py` into `seq_surrogates.predict_episode()` so both new/old scripts share it.
 - **Why:** Requested plots of surrogate performance on both Bi-2223 and REBCO surfaces, plus a look at REBCO's spatial structure.

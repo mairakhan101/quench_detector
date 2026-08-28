@@ -45,13 +45,18 @@ from hts_tape_env.thermal_bi2223 import time_margin_to_safe
 def generate_dataset(
     n_samples: int = 3000,
     *,
-    T0_range: tuple[float, float] = (77.16, 80.5),
+    T0_range: tuple[float, float] = (77.16, 81.0),
     frac_unsafe: float = 0.30,
+    I_max_Ic_frac: float = 1.5,
+    mode: str = 'no_stab',
     seed: int = 7,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Sweep (T0, I) and label each operating point for the Bi-2223 conductor.
+
+    mode='no_stab': pure power-law E-J (paper Sec 3).
+    mode='ag_stab': Ag-matrix current redistribution (Phase 2).
 
     The narrower T0 range and solve_runaway's sanity cap mean more points
     are dropped than REBCO datagen; the returned frame may be significantly
@@ -65,27 +70,29 @@ def generate_dataset(
             print(f"  generated {k}/{n_samples} attempts, {len(rows)} kept")
 
         T0 = float(rng.uniform(*T0_range))
-        Istar, Tstar = solve_runaway(T0)
+        Istar, Tstar = solve_runaway(T0, mode=mode)
         if not np.isfinite(Istar) or Istar <= 0:
             continue
 
         if rng.random() >= frac_unsafe:
             frac = rng.uniform(0.50, 0.99)
             I = frac * Istar
-            Tsurf = stable_surface_T(I, T0, T_hi=Tstar)
+            Tsurf = stable_surface_T(I, T0, T_hi=Tstar, mode=mode)
             if not np.isfinite(Tsurf):
                 continue
-            V = tape_voltage(I, min(Tsurf, T_X_K - 1e-4))
+            V = tape_voltage(I, min(Tsurf, T_X_K - 1e-4), mode=mode)
             runaway_flag = 0
             time_margin_ms = np.nan
         else:
-            frac = rng.uniform(1.01, 1.20)
+            from hts_tape_env.physics_bi2223 import Ic as _Ic
+            frac_hi = max(1.20, I_max_Ic_frac * float(_Ic(T0)) / Istar)
+            frac = rng.uniform(1.01, frac_hi)
             I = frac * Istar
             tm_s = time_margin_to_safe(I, Tstar)
             if not np.isfinite(tm_s):
                 continue
             Tsurf = Tstar
-            V = tape_voltage(I, min(Tstar, T_X_K - 1e-4))
+            V = tape_voltage(I, min(Tstar, T_X_K - 1e-4), mode=mode)
             runaway_flag = 1
             time_margin_ms = tm_s * 1000.0
 

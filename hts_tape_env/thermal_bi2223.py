@@ -12,13 +12,16 @@ module supplies it using NIST cryogenic data for silver and the 1 mm^2
 Ag/AgMg cross-section stated in the paper (p7).
 
 Material property caveat: the NIST anchors below are for pure annealed
-silver (RRR ~ 100). The actual Ag/AgMg alloy has somewhat higher
-resistivity (lower RRR) due to the Mg addition, but the paper provides
-no measured normal-state resistance for this conductor. The thermal
-properties (cp, density) are close to pure Ag at cryogenic temperatures
-since the Mg content is small and primarily affects mechanical properties.
-Treat time margins from this module as approximate -- same caveat level
-as the eyeballed Ic(T)/n(T) anchors in physics_bi2223.py.
+silver (RRR ~ 100). The actual Ag/AgMg alloy has significantly higher
+resistivity due to alloy scattering — typically 7-12× pure Ag for
+Ag-3%Mg at 77 K.  RHO_AG_MULTIPLIER (default 10.0) scales the NIST
+values to approximate this.  Sensitivity analysis shows that the Bi-2223
+Ag-stab runaway boundary (I*) only exists when the multiplier exceeds
+~6×; at pure-Ag values (1×) the matrix shunts so effectively that no I*
+exists, which is unrealistic.  The paper provides no measured
+normal-state resistance, so the default 10× is a mid-range estimate.
+The thermal properties (cp, density) are close to pure Ag at cryogenic
+temperatures since the Mg content is small.
 """
 
 import numpy as np
@@ -28,6 +31,13 @@ from hts_tape_env.physics_bi2223 import L  # 0.305 m segment length
 # ── Bi-2223 conductor geometry (paper Sec. 3, p7-8) ─────────────────
 A_ag = 1.0e-6          # non-SC (Ag/AgMg matrix) cross-section [m^2] = 1 mm^2
 rho_mass_ag = 10490.0   # silver mass density [kg/m^3]
+
+# Resistivity multiplier: pure Ag NIST anchors × this factor.
+# Pure Ag (1.0) is unrealistically low for the Ag/AgMg alloy matrix.
+# Ag-3%Mg at 77 K has ~7-12× the resistivity of pure Ag due to alloy
+# scattering.  Default 10.0 is a mid-range estimate; the paper provides
+# no measured normal-state resistance for this conductor.
+RHO_AG_MULTIPLIER = 10.0
 
 # ── Silver specific-heat anchors [J/kg/K] vs T [K], NIST ────────────
 _AG_T_CP = np.array([4.0, 10.0, 20.0, 50.0, 77.0, 100.0, 200.0, 300.0])
@@ -52,8 +62,19 @@ def cp_ag(T):
 
 
 def rho_ag(T):
-    """Silver resistivity [Ohm-m]."""
-    return _logp(T, _AG_T_RHO, _AG_RHO)
+    """Ag/AgMg matrix resistivity [Ohm-m].
+
+    Returns pure-Ag NIST values scaled by RHO_AG_MULTIPLIER to approximate
+    the alloy.  Change the module-level constant or call set_rho_multiplier()
+    to adjust.
+    """
+    return _logp(T, _AG_T_RHO, _AG_RHO) * RHO_AG_MULTIPLIER
+
+
+def set_rho_multiplier(mult: float):
+    """Set the Ag-matrix resistivity multiplier at runtime."""
+    global RHO_AG_MULTIPLIER
+    RHO_AG_MULTIPLIER = float(mult)
 
 
 def R_ag(T):

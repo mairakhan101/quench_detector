@@ -1,0 +1,6 @@
+Conductor,Best Pt Err,Pt Spec,Pt Band Err,GRU I* Err,Xfmr I* Err,Xfmr T* MAE,Xfmr Band Err
+Bi-2223 no-stab,0.02%,raw,0.02%,23.98%,10.05%,62.57 K,7.43%
+Bi-2223 Ag-stab,0.01%,raw,0.01%,3.06%,1.58%,0.39 K,1.51%
+REBCO no-redist,0.11%,two_d,0.48%,33.25%,13.19%,0.61 K,3.10%
+REBCO Cu/SS redist,0.19%,two_d,0.71%,25.89%,8.59%,0.73 K,7.86%
+REBCO 1D-FD,1.32%,A,21.73%,10.33%,22.31%,63.81 K,7.75%
