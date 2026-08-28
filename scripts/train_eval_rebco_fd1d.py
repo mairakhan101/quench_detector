@@ -155,6 +155,10 @@ def main():
                     help="Skip trajectory generation and sequence surrogates")
     ap.add_argument("--backend", default="numpy", choices=["numpy", "jax"],
                     help="FD solver backend (numpy or jax)")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="Use boundary-aware adaptive sampling (future — FD datagen not yet wired)")
+    ap.add_argument("--blend", type=float, default=0.5,
+                    help="Curvature/uniform T0 mix ratio (0=uniform, 1=curvature)")
     args = ap.parse_args()
 
     out = Path(args.out_dir)

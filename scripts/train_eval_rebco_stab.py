@@ -47,6 +47,10 @@ def main():
     ap.add_argument("--seq-epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", default="models")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="Use boundary-aware adaptive sampling")
+    ap.add_argument("--blend", type=float, default=0.5,
+                    help="Curvature/uniform T0 mix ratio (0=uniform, 1=curvature)")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -54,12 +58,18 @@ def main():
 
     # ── 1. Static data ──────────────────────────────────────────────────
     print("\n=== 1. Generating static dataset ===")
-    df = generate_dataset(
-        args.n_samples,
-        mode="stab",
-        lam_range=(20, 200),
-        seed=args.seed,
-    )
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import generate_adaptive_dataset_rebco
+        df = generate_adaptive_dataset_rebco(
+            args.n_samples, mode="stab", blend=args.blend, seed=args.seed,
+        )
+    else:
+        df = generate_dataset(
+            args.n_samples,
+            mode="stab",
+            lam_range=(20, 200),
+            seed=args.seed,
+        )
     print(f"  {len(df)} rows, {df.runaway.mean():.0%} unsafe")
 
     # ── 2. Train point surrogates ───────────────────────────────────────
@@ -78,11 +88,26 @@ def main():
 
     # ── 3. Generate trajectory data ─────────────────────────────────────
     print("\n=== 3. Generating trajectory dataset ===")
-    df_traj = generate_rollout_dataset(
-        args.n_episodes,
-        env_kwargs={"mode": "stab"},
-        seed=args.seed,
-    )
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import (
+            generate_adaptive_rollout_dataset, curvature_weighted_T0,
+        )
+        from hts_tape_env.physics import solve_runaway as _solve
+        from hts_tape_env.env import QuenchDetectorEnv
+        from functools import partial
+        _solve_stab = lambda T0: _solve(T0, 20.0, mode="stab", lam_override=100.0)
+        _T0_sampler = partial(curvature_weighted_T0, T0_range=(10.0, 75.0),
+                              solve_fn=_solve_stab, blend=args.blend)
+        env = QuenchDetectorEnv(mode="stab")
+        df_traj = generate_adaptive_rollout_dataset(
+            args.n_episodes, env=env, T0_sampler=_T0_sampler, seed=args.seed,
+        )
+    else:
+        df_traj = generate_rollout_dataset(
+            args.n_episodes,
+            env_kwargs={"mode": "stab"},
+            seed=args.seed,
+        )
 
     # ── 4. Train sequence surrogates ────────────────────────────────────
     print("\n=== 4. Training sequence surrogates ===")

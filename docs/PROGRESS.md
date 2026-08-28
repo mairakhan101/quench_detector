@@ -1,6 +1,16 @@
 # Progress log
 
 <!-- newest entry on top -->
+## 2026-08-28 (4) — Diffusion map analysis of thermal runaway parameter space
+- **What:** Created `scripts/diffusion_map_analysis.py` — Coifman–Lafon diffusion map on the (T₀, I, [λ]) operating-point manifold for all 4 analytic conductors (REBCO no-stab, REBCO stab, Bi-2223 no-stab, Bi-2223 Ag-stab). Computes Gaussian kernel → α-normalized Markov matrix → eigendecomposition. Produces per-conductor plots (2D embedding colored by I*/margin/runaway, sampling density vs boundary distance, boundary geometry in diffusion coords) plus cross-conductor summary (spectral gaps, effective dimensionality, sampling concentration, manifold extent).
+- **Why:** To discover the intrinsic geometry of the runaway boundary manifold and identify where the current uniform sampling is undersampled — directly informs boundary-aware adaptive sampling strategy for training set optimization (Genesis 13B roadmap).
+- **Result/metric:**
+  - Effective dimensionality ~4.0 (participation ratio) across all conductors despite 2-3D input spaces — nonlinear physics creates extra intrinsic dimensions
+  - Spectral gap after coordinate 3 in all cases — runaway manifold is 3-dimensional
+  - Only 13-15% of samples fall within 5% of the boundary — the critical region is consistently undersampled
+  - ψ₁ vs T₀ reveals nonlinear kinks at material property transitions (30-40K for REBCO, 79-80K for Bi-2223) — sampling should concentrate here
+  - 16 diagnostic plots generated in models/diffmap_*.png
+
 ## 2026-08-28 (3) — JAX vectorization of 1D FD solver + unified benchmark script
 - **What:** Created `hts_tape_env/physics_fd1d_jax.py` — JAX-JIT reimplementation of all material property functions (`rho_cu`, `rho_ss`, `cp_cu`, `cp_ss`, `k_cu`, `k_ss`, `Ic`), composite geometry functions (`k_eff`, `C_eff`, `G_norm`), vectorized Newton current-sharing solver, and Du Fort-Frankel step. The settle loop (n_settle_steps of current-sharing + DFF step) is fused via `jax.lax.scan` into a single XLA program. Added `backend='numpy'/'jax'` parameter to `FD1DQuenchDetectorEnv`. Created `tests/test_physics_fd1d_jax.py` (17 parity tests) and `scripts/benchmark_all_envs.py` (unified production benchmark for all 5 envs).
 - **Why:** The NumPy FD solver spends most time in per-node Python loops for material property evaluation (~10,000 scalar calls per env step). JAX eliminates this overhead by compiling the entire settle loop into one fused kernel.

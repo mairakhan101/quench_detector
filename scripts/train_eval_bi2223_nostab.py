@@ -45,6 +45,10 @@ def main():
     ap.add_argument("--seq-epochs", type=int, default=60)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", default="models")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="Use boundary-aware adaptive sampling")
+    ap.add_argument("--blend", type=float, default=0.5,
+                    help="Curvature/uniform T0 mix ratio (0=uniform, 1=curvature)")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -52,12 +56,18 @@ def main():
 
     # ── 1. Static (input-based) data ────────────────────────────────────
     print("\n=== 1. Generating static dataset ===")
-    df = generate_dataset(
-        args.n_samples,
-        T0_range=(77.16, 81.0),
-        I_max_Ic_frac=1.5,
-        seed=args.seed,
-    )
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import generate_adaptive_dataset_bi2223
+        df = generate_adaptive_dataset_bi2223(
+            args.n_samples, mode="no_stab", blend=args.blend, seed=args.seed,
+        )
+    else:
+        df = generate_dataset(
+            args.n_samples,
+            T0_range=(77.16, 81.0),
+            I_max_Ic_frac=1.5,
+            seed=args.seed,
+        )
     print(f"  {len(df)} rows, {df.runaway.mean():.0%} unsafe")
 
     # ── 2. Train point surrogates ───────────────────────────────────────
@@ -76,7 +86,16 @@ def main():
 
     # ── 3. Generate trajectory data via Gym env ─────────────────────────
     print("\n=== 3. Generating trajectory dataset ===")
-    T0_grid = np.linspace(77.5, 81.0, args.n_eval_points)
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import curvature_weighted_T0
+        _solve_nostab = lambda T0: solve_runaway(T0, mode="no_stab")
+        rng = np.random.default_rng(args.seed)
+        T0_grid = np.sort(curvature_weighted_T0(
+            rng, args.n_eval_points, (77.5, 81.0),
+            _solve_nostab, blend=args.blend,
+        ))
+    else:
+        T0_grid = np.linspace(77.5, 81.0, args.n_eval_points)
     df_traj = generate_grid_dataset(T0_grid, seed=args.seed)
 
     # ── 4. Train sequence surrogates ────────────────────────────────────

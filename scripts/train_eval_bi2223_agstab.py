@@ -57,6 +57,10 @@ def main():
     ap.add_argument("--out-dir", default="models")
     ap.add_argument("--rho-mult", type=float, default=10.0,
                     help="Ag-matrix resistivity multiplier (× pure Ag NIST)")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="Use boundary-aware adaptive sampling")
+    ap.add_argument("--blend", type=float, default=0.5,
+                    help="Curvature/uniform T0 mix ratio (0=uniform, 1=curvature)")
     args = ap.parse_args()
 
     from hts_tape_env.thermal_bi2223 import set_rho_multiplier
@@ -68,13 +72,20 @@ def main():
 
     # ── 1. Static (input-based) data ────────────────────────────────────
     print("\n=== 1. Generating static dataset ===")
-    df = generate_dataset(
-        args.n_samples,
-        T0_range=(T0_LO, T0_HI),
-        I_max_Ic_frac=1.5,
-        mode=MODE,
-        seed=args.seed,
-    )
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import generate_adaptive_dataset_bi2223
+        df = generate_adaptive_dataset_bi2223(
+            args.n_samples, mode=MODE, T0_range=(T0_LO, T0_HI),
+            blend=args.blend, seed=args.seed,
+        )
+    else:
+        df = generate_dataset(
+            args.n_samples,
+            T0_range=(T0_LO, T0_HI),
+            I_max_Ic_frac=1.5,
+            mode=MODE,
+            seed=args.seed,
+        )
     print(f"  {len(df)} rows, {df.runaway.mean():.0%} unsafe")
 
     if len(df) < 50:
@@ -98,7 +109,16 @@ def main():
 
     # ── 3. Generate trajectory data via Gym env ─────────────────────────
     print("\n=== 3. Generating trajectory dataset ===")
-    T0_grid = np.linspace(T0_LO + 0.1, T0_HI, args.n_eval_points)
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import curvature_weighted_T0
+        _solve_ag = lambda T0: solve_runaway(T0, mode=MODE)
+        rng = np.random.default_rng(args.seed)
+        T0_grid = np.sort(curvature_weighted_T0(
+            rng, args.n_eval_points, (T0_LO + 0.1, T0_HI),
+            _solve_ag, blend=args.blend,
+        ))
+    else:
+        T0_grid = np.linspace(T0_LO + 0.1, T0_HI, args.n_eval_points)
     df_traj = generate_grid_dataset(
         T0_grid, env_kwargs={"mode": MODE}, seed=args.seed,
     )
@@ -108,12 +128,28 @@ def main():
     seq_results = {}
 
     # Also generate random rollouts for sequence training
-    from hts_tape_env.rollout_bi2223_env import generate_rollout_dataset
-    df_rollout = generate_rollout_dataset(
-        args.seq_episodes,
-        env_kwargs={"mode": MODE, "T0_range": (T0_LO, T0_HI - 0.2)},
-        seed=args.seed + 1000,
-    )
+    if args.adaptive:
+        from hts_tape_env.adaptive_sampling import (
+            generate_adaptive_rollout_dataset, curvature_weighted_T0,
+        )
+        from hts_tape_env.env_bi2223 import Bi2223QuenchDetectorEnv
+        from functools import partial
+        _solve_ag_fn = lambda T0: solve_runaway(T0, mode=MODE)
+        _T0_sampler = partial(curvature_weighted_T0,
+                              T0_range=(T0_LO, T0_HI - 0.2),
+                              solve_fn=_solve_ag_fn, blend=args.blend)
+        _env = Bi2223QuenchDetectorEnv(mode=MODE, T0_range=(T0_LO, T0_HI - 0.2))
+        df_rollout = generate_adaptive_rollout_dataset(
+            args.seq_episodes, env=_env, T0_sampler=_T0_sampler,
+            seed=args.seed + 1000,
+        )
+    else:
+        from hts_tape_env.rollout_bi2223_env import generate_rollout_dataset
+        df_rollout = generate_rollout_dataset(
+            args.seq_episodes,
+            env_kwargs={"mode": MODE, "T0_range": (T0_LO, T0_HI - 0.2)},
+            seed=args.seed + 1000,
+        )
 
     for arch in ["gru", "transformer", "ssm"]:
         print(f"\n  Training {arch}...")

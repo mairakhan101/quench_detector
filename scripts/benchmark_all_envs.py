@@ -63,7 +63,8 @@ BENCHMARKS = [
 ]
 
 
-def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int):
+def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int,
+                   adaptive: bool = False, blend: float = 0.5):
     script = SCRIPTS_DIR / bench["script"]
     args = bench[f"args_{scale}"]
     cmd = [
@@ -72,6 +73,8 @@ def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int):
         "--seed", str(seed),
         "--out-dir", out_dir,
     ]
+    if adaptive:
+        cmd.extend(["--adaptive", "--blend", str(blend)])
 
     print(f"\n{'='*60}")
     print(f"  {bench['name']}")
@@ -97,6 +100,10 @@ def main():
     ap.add_argument("--out-dir", default="models")
     ap.add_argument("--only", type=str, default=None,
                     help="Run only benchmarks whose name contains this substring")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="Pass --adaptive to each benchmark script")
+    ap.add_argument("--blend", type=float, default=0.5,
+                    help="Pass --blend to each benchmark script")
     args = ap.parse_args()
 
     results = {}
@@ -104,7 +111,8 @@ def main():
         if args.only and args.only.lower() not in bench["name"].lower():
             print(f"Skipping {bench['name']} (--only filter)")
             continue
-        ok = run_benchmark(bench, args.scale, args.out_dir, args.seed)
+        ok = run_benchmark(bench, args.scale, args.out_dir, args.seed,
+                           adaptive=args.adaptive, blend=args.blend)
         results[bench["name"]] = ok
 
     print("\n" + "=" * 60)
