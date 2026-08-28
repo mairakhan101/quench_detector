@@ -19,6 +19,7 @@ from __future__ import annotations
 import _bootstrap  # noqa: F401
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -83,6 +84,7 @@ def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int,
 
     env = dict(__import__("os").environ)
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONPATH"] = str(SCRIPTS_DIR.parent) + os.pathsep + env.get("PYTHONPATH", "")
 
     t0 = time.time()
     result = subprocess.run(cmd, env=env)

@@ -553,13 +553,14 @@ def predict_episode(result: SeqTrainResult, X: np.ndarray) -> dict:
     one batched forward pass over the whole sequence instead of streaming.
     """
     Xn = result.normalizer.transform(np.asarray(X, dtype=np.float32))
-    Xt = torch.from_numpy(Xn).unsqueeze(0)
-    lengths = torch.tensor([Xn.shape[0]])
+    device = next(result.model.parameters()).device
+    Xt = torch.from_numpy(Xn).unsqueeze(0).to(device)
+    lengths = torch.tensor([Xn.shape[0]], device=device)
     with torch.no_grad():
         out = result.model(Xt, lengths)
 
-    breach_prob = torch.sigmoid(out["breach_logit"][0]).numpy()
-    margin_pred = out["margin"][0].numpy()
+    breach_prob = torch.sigmoid(out["breach_logit"][0]).cpu().numpy()
+    margin_pred = out["margin"][0].cpu().numpy()
     alarm_idx = np.where(breach_prob > 0.5)[0]
 
     return dict(
@@ -620,7 +621,7 @@ def predict_runaway_surface(
             X = np.array([[r[c] for c in feature_cols] for r in rows], dtype=np.float32)
             X = result.normalizer.transform(X)
             Xt = torch.from_numpy(X).unsqueeze(0).to(device)          # [1, T, 4]
-            lengths = torch.tensor([X.shape[0]])
+            lengths = torch.tensor([X.shape[0]], device=device)
             with torch.no_grad():
                 out = model(Xt, lengths)
 
