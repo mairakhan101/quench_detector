@@ -122,6 +122,10 @@ class TestTrainDiffusionSurrogate:
         assert result.arch == "diffusion"
         assert "istar_mae_A" in result.metrics
         assert "breach_accuracy" in result.metrics
+        assert "converged" in result.metrics
+        assert "stopped_epoch" in result.metrics
+        assert "total_epochs" in result.metrics
+        assert result.metrics["total_epochs"] == 3
         assert result.model is not None
         assert result.normalizer is not None
 

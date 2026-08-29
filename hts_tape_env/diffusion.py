@@ -289,6 +289,11 @@ def train_diffusion_surrogate(
     n_ddim_steps: int = 50,
     dump_threshold: float = 0.05,
     val_frac: float = 0.2,
+    patience: int = 20,
+    min_delta: float = 1e-4,
+    reduce_lr_patience: int = 10,
+    reduce_lr_factor: float = 0.5,
+    min_lr: float = 1e-6,
     seed: int = 42,
     device: str | None = None,
     model_kwargs: dict | None = None,
@@ -324,6 +329,10 @@ def train_diffusion_surrogate(
     model_kwargs.setdefault("n_ddim_steps", n_ddim_steps)
     model = DiffusionSurrogate(**model_kwargs).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, patience=reduce_lr_patience, factor=reduce_lr_factor,
+        min_lr=min_lr,
+    )
 
     denoising_epochs = int(epochs * denoising_frac)
 
@@ -382,15 +391,36 @@ def train_diffusion_surrogate(
         return total / max(n_batches, 1)
 
     best_val, best_state = float("inf"), None
+    epochs_no_improve = 0
+    stopped_epoch = epochs - 1
     for epoch in range(epochs):
+        # Reset tracking at phase boundary — loss landscape changes
+        if epoch == denoising_epochs:
+            best_val = float("inf")
+            epochs_no_improve = 0
+            if verbose:
+                print("  --- Phase 2: denoise + heads ---")
+
         train_loss = run_epoch(train_dl, train=True, epoch=epoch)
         val_loss = run_epoch(val_dl, train=False, epoch=epoch)
-        if val_loss < best_val:
+        scheduler.step(val_loss)
+        if val_loss < best_val - min_delta:
             best_val = val_loss
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
         if verbose and (epoch % 10 == 0 or epoch == epochs - 1):
             phase = "denoise" if epoch < denoising_epochs else "denoise+heads"
             print(f"  epoch {epoch:3d} [{phase}]  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
+        if patience > 0 and epochs_no_improve >= patience:
+            stopped_epoch = epoch
+            if verbose:
+                phase = "denoise" if epoch < denoising_epochs else "denoise+heads"
+                print(f"  Early stopped at epoch {epoch}/{epochs} [{phase}] (patience={patience})")
+            break
+    else:
+        stopped_epoch = epochs - 1
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -447,6 +477,7 @@ def train_diffusion_surrogate(
     margin_near_mae = (float(np.mean(np.abs(margin_near_true_arr - margin_near_pred_arr)))
                         if len(margin_near_true_arr) else float("nan"))
 
+    converged = patience > 0 and epochs_no_improve >= patience
     metrics = {
         "best_val_loss": best_val,
         "istar_mae_A": istar_mae,
@@ -455,6 +486,9 @@ def train_diffusion_surrogate(
         "time_margin_median_rel_err": tm_rel,
         "breach_accuracy": breach_acc,
         "margin_near_boundary_mae": margin_near_mae,
+        "converged": converged,
+        "stopped_epoch": stopped_epoch,
+        "total_epochs": epochs,
     }
     if verbose:
         print(f"I* held-out:        MAE={istar_mae:.2f} A, median rel err={istar_rel:.2%}")
