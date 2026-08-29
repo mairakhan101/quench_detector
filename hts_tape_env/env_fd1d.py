@@ -15,6 +15,7 @@ Action:       Discrete(2)  0=continue, 1=dump
 
 from __future__ import annotations
 
+import os
 import numpy as np
 import gymnasium
 
@@ -33,17 +34,18 @@ from hts_tape_env.physics_fd1d import (
 )
 
 _JAX_AVAILABLE = False
-try:
-    import jax.numpy as jnp
-    from hts_tape_env.physics_fd1d_jax import (
-        make_lumped_params,
-        make_settle_fn,
-        make_settle_fn_lateral,
-        LumpedParams,
-    )
-    _JAX_AVAILABLE = True
-except ImportError:
-    pass
+if not os.environ.get("DISABLE_JAX"):
+    try:
+        import jax.numpy as jnp
+        from hts_tape_env.physics_fd1d_jax import (
+            make_lumped_params,
+            make_settle_fn,
+            make_settle_fn_lateral,
+            LumpedParams,
+        )
+        _JAX_AVAILABLE = True
+    except ImportError:
+        pass
 
 
 class FD1DQuenchDetectorEnv(gymnasium.Env):
