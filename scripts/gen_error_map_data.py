@@ -65,31 +65,8 @@ CONDUCTORS = {
 }
 
 def solve_istar(T0, solver, solver_kwargs):
-    if solver == "bi2223":
-        from hts_tape_env.physics_bi2223 import solve_runaway
-        mode = solver_kwargs.get("mode", "no_stab")
-        Is, Ts = solve_runaway(T0, mode=mode)
-        return Is, Ts
-    elif solver == "fd1d":
-        from hts_tape_env.physics_fd1d import (
-            Tape1D, HeaterPulse, CoolingModel, find_Istar_fd,
-        )
-        from hts_tape_env.materials import lumped_rebco_tape
-        nx = solver_kwargs.get("nx", 50)
-        tape = Tape1D(geom=lumped_rebco_tape(L=0.2, w=0.004), nx=nx)
-        heater = HeaterPulse(power=13.0, duration=0.01)
-        cool = CoolingModel(mode="bath_ends", T_bath=T0)
-        Is, Ts = find_Istar_fd(
-            tape, T0, heater=heater, cool=cool,
-            tol=solver_kwargs.get("tol", 3.0),
-            max_iter=solver_kwargs.get("max_iter", 10),
-            t_end=0.10, dt=1e-4,
-        )
-        return Is, Ts
-    else:
-        from hts_tape_env.physics import solve_runaway
-        Is, Ts = solve_runaway(T0, **solver_kwargs)
-        return Is, Ts
+    from hts_tape_env.benchmark import solve_ground_truth
+    return solve_ground_truth(T0, solver, solver_kwargs)
 
 
 def main():

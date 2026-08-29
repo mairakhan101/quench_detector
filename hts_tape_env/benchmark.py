@@ -19,6 +19,42 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
 
+# ── Ground-truth solver dispatch ────────────────────────────────────────────
+
+def solve_ground_truth(
+    T0: float,
+    solver: str,
+    solver_kwargs: dict | None = None,
+) -> tuple[float, float]:
+    """Compute (I*, T*) at a single operating temperature using the specified solver.
+
+    solver: "bi2223" | "rebco" | "fd1d"
+    Returns (Istar, Tstar). Both may be NaN if no runaway is found.
+    """
+    solver_kwargs = solver_kwargs or {}
+    if solver == "bi2223":
+        from hts_tape_env.physics_bi2223 import solve_runaway
+        return solve_runaway(T0, mode=solver_kwargs.get("mode", "no_stab"))
+    elif solver == "fd1d":
+        from hts_tape_env.physics_fd1d import (
+            Tape1D, HeaterPulse, CoolingModel, find_Istar_fd,
+        )
+        from hts_tape_env.materials import lumped_rebco_tape
+        nx = solver_kwargs.get("nx", 50)
+        tape = Tape1D(geom=lumped_rebco_tape(L=0.2, w=0.004), nx=nx)
+        heater = HeaterPulse(power=13.0, duration=0.01)
+        cool = CoolingModel(mode="bath_ends", T_bath=T0)
+        return find_Istar_fd(
+            tape, T0, heater=heater, cool=cool,
+            tol=solver_kwargs.get("tol", 3.0),
+            max_iter=solver_kwargs.get("max_iter", 10),
+            t_end=0.10, dt=1e-4,
+        )
+    else:
+        from hts_tape_env.physics import solve_runaway
+        return solve_runaway(T0, **solver_kwargs)
+
+
 # ── Nonlinear-region metrics ─────────────────────────────────────────────────
 
 def _rel_err(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
