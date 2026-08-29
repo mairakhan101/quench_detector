@@ -65,6 +65,7 @@ echo "=== Node $RANK: $CONDUCTOR / $NOISE (adaptive) on $(hostname) ==="
 echo "Date: $(date)"
 mkdir -p "$OUT"
 cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 
 $PYTHON "scripts/$SCRIPT" \
     $ARGS \

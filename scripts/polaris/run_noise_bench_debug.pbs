@@ -26,6 +26,7 @@ SEED=42
 
 mkdir -p "$OUT"
 cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 
 echo "=== Noise benchmark debug smoke test on $(hostname) ==="
 echo "Date: $(date)"

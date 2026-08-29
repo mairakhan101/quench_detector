@@ -9,6 +9,8 @@ no Cu/SS stabilizer current sharing).
 
 from __future__ import annotations
 
+import _bootstrap  # noqa: F401
+
 import argparse
 from pathlib import Path
 
