@@ -1,14 +1,14 @@
 #!/bin/bash
 #PBS -A fanc_ldrd
-#PBS -q prod
-#PBS -l select=2:system=polaris
-#PBS -l walltime=03:00:00
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
 #PBS -l filesystems=home:eagle
 #PBS -N fd1d_prod
 #PBS -j oe
 
-# Production FD1d training: 2000 samples, 500 episodes, 400 epochs, nx=100, JAX backend.
-# Single node — FD solver is CPU-bound, no pbsdsh needed.
+# FD1d production training on debug queue (1hr, 1 node).
+# Reduced episodes to fit in debug walltime; resubmit for full run.
 #
 # Submit:  qsub scripts/polaris/fd1d_prod.sh
 
@@ -32,8 +32,8 @@ echo "Date: $(date)"
 
 $PYTHON scripts/train_eval_rebco_fd1d.py \
     --n-samples 2000 \
-    --n-episodes 1000 \
-    --seq-epochs 400 \
+    --n-episodes 500 \
+    --seq-epochs 200 \
     --nx 100 \
     --backend jax \
     --seed 42 \

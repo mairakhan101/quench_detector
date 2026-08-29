@@ -1,17 +1,26 @@
 #!/bin/bash
 #PBS -A fanc_ldrd
-#PBS -q prod
-#PBS -l select=2:system=polaris
-#PBS -l walltime=06:00:00
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
 #PBS -l filesystems=home:eagle
 #PBS -N retrain_emb
 #PBS -j oe
 
-# Retrain Transformer + SSM with sinusoidal positional embeddings across
-# all 5 conductors. 400 epochs, doubled episodes where applicable.
-# Single node, sequential — each conductor takes ~20-30 min for transformer+ssm.
+# Retrain Transformer + SSM with sinusoidal positional embeddings.
+# Runs ONE conductor per submission (debug queue, 1hr, 1 node).
 #
-# Submit:  qsub scripts/polaris/retrain_emb.sh
+# Set CONDUCTOR env var before submit:
+#   CONDUCTOR=bi2223_nostab qsub scripts/polaris/retrain_emb.sh
+#   CONDUCTOR=bi2223_agstab qsub scripts/polaris/retrain_emb.sh
+#   CONDUCTOR=rebco_nostab  qsub scripts/polaris/retrain_emb.sh
+#   CONDUCTOR=rebco_stab    qsub scripts/polaris/retrain_emb.sh
+#   CONDUCTOR=rebco_fd1d    qsub scripts/polaris/retrain_emb.sh
+#
+# Or submit all at once:
+#   for c in bi2223_nostab bi2223_agstab rebco_nostab rebco_stab rebco_fd1d; do
+#     CONDUCTOR=$c qsub scripts/polaris/retrain_emb.sh
+#   done
 
 set -euo pipefail
 
@@ -31,56 +40,47 @@ mkdir -p "$OUTDIR"
 MODEL_KWARGS='{"pos_emb": "sinusoidal"}'
 EPOCHS=400
 SEED=42
+COND="${CONDUCTOR:-rebco_nostab}"
 
-echo "=== Retrain Transformer + SSM with sinusoidal embeddings ==="
+echo "=== Retrain $COND with sinusoidal embeddings ==="
 echo "Date: $(date)"
-echo "Model kwargs: $MODEL_KWARGS"
 
-# Bi-2223 no-stab (--n-samples 8000 for more training data)
-echo ""
-echo "=== bi2223_nostab ==="
-$PYTHON scripts/train_eval_bi2223_nostab.py \
-    --n-samples 8000 \
-    --seq-epochs $EPOCHS --seed $SEED --out-dir "$OUTDIR" \
-    --archs transformer ssm \
-    --model-kwargs "$MODEL_KWARGS"
+case "$COND" in
+  bi2223_nostab)
+    $PYTHON scripts/train_eval_bi2223_nostab.py \
+        --n-samples 8000 --seq-epochs $EPOCHS --seed $SEED \
+        --out-dir "$OUTDIR" --archs transformer ssm \
+        --model-kwargs "$MODEL_KWARGS"
+    ;;
+  bi2223_agstab)
+    $PYTHON scripts/train_eval_bi2223_agstab.py \
+        --n-samples 8000 --seq-epochs $EPOCHS --seed $SEED \
+        --out-dir "$OUTDIR" --archs transformer ssm \
+        --model-kwargs "$MODEL_KWARGS"
+    ;;
+  rebco_nostab)
+    $PYTHON scripts/train_eval_rebco_nostab.py \
+        --n-episodes 3000 --seq-epochs $EPOCHS --seed $SEED \
+        --out-dir "$OUTDIR" --archs transformer ssm \
+        --model-kwargs "$MODEL_KWARGS"
+    ;;
+  rebco_stab)
+    $PYTHON scripts/train_eval_rebco_stab.py \
+        --n-episodes 3000 --seq-epochs $EPOCHS --seed $SEED \
+        --out-dir "$OUTDIR" --archs transformer ssm \
+        --model-kwargs "$MODEL_KWARGS"
+    ;;
+  rebco_fd1d)
+    $PYTHON scripts/train_eval_rebco_fd1d.py \
+        --n-samples 2000 --n-episodes 1000 --seq-epochs $EPOCHS \
+        --nx 100 --backend jax --seed $SEED \
+        --out-dir "$OUTDIR" --archs transformer ssm \
+        --model-kwargs "$MODEL_KWARGS"
+    ;;
+  *)
+    echo "Unknown conductor: $COND"
+    exit 1
+    ;;
+esac
 
-# Bi-2223 Ag-stab
-echo ""
-echo "=== bi2223_agstab ==="
-$PYTHON scripts/train_eval_bi2223_agstab.py \
-    --n-samples 8000 \
-    --seq-epochs $EPOCHS --seed $SEED --out-dir "$OUTDIR" \
-    --archs transformer ssm \
-    --model-kwargs "$MODEL_KWARGS"
-
-# REBCO no-stab (default is 1500 episodes, bump to 3000)
-echo ""
-echo "=== rebco_nostab ==="
-$PYTHON scripts/train_eval_rebco_nostab.py \
-    --n-episodes 3000 \
-    --seq-epochs $EPOCHS --seed $SEED --out-dir "$OUTDIR" \
-    --archs transformer ssm \
-    --model-kwargs "$MODEL_KWARGS"
-
-# REBCO stab
-echo ""
-echo "=== rebco_stab ==="
-$PYTHON scripts/train_eval_rebco_stab.py \
-    --n-episodes 3000 \
-    --seq-epochs $EPOCHS --seed $SEED --out-dir "$OUTDIR" \
-    --archs transformer ssm \
-    --model-kwargs "$MODEL_KWARGS"
-
-# REBCO FD1d (bump from 500 to 1000 episodes)
-echo ""
-echo "=== rebco_fd1d ==="
-$PYTHON scripts/train_eval_rebco_fd1d.py \
-    --n-samples 2000 \
-    --n-episodes 1000 \
-    --seq-epochs $EPOCHS --nx 100 --backend jax --seed $SEED --out-dir "$OUTDIR" \
-    --archs transformer ssm \
-    --model-kwargs "$MODEL_KWARGS"
-
-echo ""
-echo "=== All retraining complete: $(date) ==="
+echo "=== $COND retrain done: $(date) ==="
