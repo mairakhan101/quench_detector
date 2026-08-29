@@ -57,7 +57,7 @@ def _row(episode_id: int, step: int, obs: np.ndarray, info: dict) -> dict:
         I_true_A=info["I_true_A"],
         voltage_true_V=info["voltage_true_V"],
         T_surface_true_K=info["T_surface_true_K"],
-        lam=info["lam"],
+        lam=info.get("lam", float("nan")),
         Istar_A=info["I_star"],
         Tstar_K=info["T_star"],
         margin_norm=info["margin"],
