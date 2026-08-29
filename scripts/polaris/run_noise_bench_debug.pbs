@@ -1,0 +1,40 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -N noise_bench_debug
+#PBS -j oe
+
+# Smoke test: 1 node, quick scale, 2 archs × 3 noise × 1 conductor.
+# Validates the pipeline before submitting production jobs.
+#
+# Submit:  qsub scripts/polaris/run_noise_bench_debug.pbs
+
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=4
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+OUT=/eagle/fanc_ldrd/magnets_fem/noise_bench_debug
+SEED=42
+
+mkdir -p "$OUT"
+cd "$REPO"
+
+echo "=== Noise benchmark debug smoke test on $(hostname) ==="
+echo "Date: $(date)"
+
+# Quick: 2 archs (gru + diffusion), 3 noise levels, REBCO stab only
+$PYTHON scripts/train_eval_rebco_stab.py \
+    --n-samples 200 --n-episodes 30 --seq-epochs 5 \
+    --archs gru diffusion \
+    --noise noiseless gauss_2x realistic \
+    --seed $SEED --out-dir "$OUT"
+
+echo "=== Debug smoke test done: $(date) ==="
