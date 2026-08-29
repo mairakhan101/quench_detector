@@ -27,12 +27,14 @@ from hts_tape_env.physics_fd1d import (
 from hts_tape_env.rollout import rollout_episode
 from hts_tape_env.surrogates import SPECS, train_spec
 from hts_tape_env.seq_surrogates import train_seq_surrogate, predict_episode
+from hts_tape_env.seq_data import FEATURES, TRUE_FEATURES
 from hts_tape_env.benchmark import (
     benchmark_point_surrogates,
     benchmark_seq_surrogates,
     make_benchmark_report,
     make_diagnostic_figure,
 )
+from hts_tape_env.noise_models import NOISE_CONFIGS, apply_noise_to_rollout
 
 CONDUCTOR = "rebco_fd1d"
 NONLINEAR_BAND = (70.0, 80.0)
@@ -159,6 +161,10 @@ def main():
                     help="Use boundary-aware adaptive sampling (future — FD datagen not yet wired)")
     ap.add_argument("--blend", type=float, default=0.5,
                     help="Curvature/uniform T0 mix ratio (0=uniform, 1=curvature)")
+    ap.add_argument("--archs", nargs="+", default=["gru", "transformer", "ssm"],
+                    help="Sequence architectures to train (gru transformer ssm diffusion)")
+    ap.add_argument("--noise", nargs="+", default=["noiseless"],
+                    help="Noise configs to sweep (noiseless gauss_0.5x gauss_1x gauss_2x gauss_5x realistic)")
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -215,24 +221,54 @@ def main():
 
         print("\n=== 4. Training sequence surrogates ===")
         seq_results = {}
-        for arch in ["gru", "transformer", "ssm"]:
-            print(f"\n  Training {arch}...")
-            try:
-                result = train_seq_surrogate(
-                    df_traj, arch=arch, epochs=args.seq_epochs, seed=args.seed,
-                )
-                seq_results[arch] = result
-                result.save(out / f"{CONDUCTOR}_seq_{arch}.pt")
-                print(f"  Saved {out / f'{CONDUCTOR}_seq_{arch}.pt'}")
-            except Exception as e:
-                print(f"  {arch}: FAILED — {e}")
+        for noise_name in args.noise:
+            if noise_name == "noiseless":
+                df_train = df_traj
+                feat_cols = TRUE_FEATURES
+            else:
+                print(f"\n  Applying noise: {noise_name}")
+                df_train = apply_noise_to_rollout(df_traj, NOISE_CONFIGS[noise_name], seed=args.seed)
+                feat_cols = FEATURES
 
-        # Evaluate sequence surrogates
-        for arch, sr in seq_results.items():
+            for arch in args.archs:
+                tag = arch if noise_name == "noiseless" else f"{noise_name}/{arch}"
+                print(f"\n  Training {tag}...")
+                try:
+                    if arch == "diffusion":
+                        from hts_tape_env.diffusion import train_diffusion_surrogate
+                        result = train_diffusion_surrogate(
+                            df_train, epochs=args.seq_epochs, seed=args.seed,
+                            feature_cols=feat_cols,
+                        )
+                    else:
+                        result = train_seq_surrogate(
+                            df_train, arch=arch, epochs=args.seq_epochs, seed=args.seed,
+                            feature_cols=feat_cols,
+                        )
+                    key = tag
+                    seq_results[key] = result
+                    fname = f"{CONDUCTOR}_seq_{arch}.pt" if noise_name == "noiseless" \
+                        else f"{CONDUCTOR}_{noise_name}_seq_{arch}.pt"
+                    result.save(out / fname)
+                    print(f"  Saved {out / fname}")
+                except Exception as e:
+                    print(f"  {tag}: FAILED — {e}")
+
+        _eval_noise_cache = {}
+        for key, sr in seq_results.items():
+            noise_name = key.split("/")[0] if "/" in key else "noiseless"
+            if noise_name not in _eval_noise_cache:
+                if noise_name == "noiseless":
+                    _eval_noise_cache[noise_name] = df_traj
+                else:
+                    _eval_noise_cache[noise_name] = apply_noise_to_rollout(
+                        df_traj, NOISE_CONFIGS[noise_name], seed=args.seed + 999)
+            df_eval_noise = _eval_noise_cache[noise_name]
+
             Istar_preds = []
             valid_T0 = []
-            for ep_id in sorted(df_traj["episode_id"].unique()):
-                ep = df_traj[df_traj["episode_id"] == ep_id]
+            for ep_id in sorted(df_eval_noise["episode_id"].unique()):
+                ep = df_eval_noise[df_eval_noise["episode_id"] == ep_id]
                 feats = sr.meta.get("features",
                                     ["T0_K", "I_true_A", "voltage_true_V", "T_surface_true_K"])
                 X = ep[feats].values
@@ -256,7 +292,7 @@ def main():
             valid_T0_eval = valid_T0_arr[:50]
             Istar_pred_eval = Istar_pred[:50]
 
-            seq_metrics[arch] = benchmark_seq_surrogates(
+            seq_metrics[key] = benchmark_seq_surrogates(
                 sr.metrics, valid_T0_eval, Istar_fd, Istar_pred_eval,
                 nonlinear_band=NONLINEAR_BAND,
             )

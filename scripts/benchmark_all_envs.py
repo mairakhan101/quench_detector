@@ -65,7 +65,8 @@ BENCHMARKS = [
 
 
 def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int,
-                   adaptive: bool = False, blend: float = 0.5):
+                   adaptive: bool = False, blend: float = 0.5,
+                   archs: list[str] | None = None, noise: list[str] | None = None):
     script = SCRIPTS_DIR / bench["script"]
     args = bench[f"args_{scale}"]
     cmd = [
@@ -76,6 +77,10 @@ def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int,
     ]
     if adaptive:
         cmd.extend(["--adaptive", "--blend", str(blend)])
+    if archs:
+        cmd.extend(["--archs", *archs])
+    if noise:
+        cmd.extend(["--noise", *noise])
 
     print(f"\n{'='*60}")
     print(f"  {bench['name']}")
@@ -106,6 +111,10 @@ def main():
                     help="Pass --adaptive to each benchmark script")
     ap.add_argument("--blend", type=float, default=0.5,
                     help="Pass --blend to each benchmark script")
+    ap.add_argument("--archs", nargs="+", default=None,
+                    help="Sequence architectures (forwarded to each script)")
+    ap.add_argument("--noise", nargs="+", default=None,
+                    help="Noise configs (forwarded to each script)")
     args = ap.parse_args()
 
     results = {}
@@ -114,7 +123,8 @@ def main():
             print(f"Skipping {bench['name']} (--only filter)")
             continue
         ok = run_benchmark(bench, args.scale, args.out_dir, args.seed,
-                           adaptive=args.adaptive, blend=args.blend)
+                           adaptive=args.adaptive, blend=args.blend,
+                           archs=args.archs, noise=args.noise)
         results[bench["name"]] = ok
 
     print("\n" + "=" * 60)

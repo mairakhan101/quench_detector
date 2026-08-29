@@ -1,6 +1,16 @@
 # Progress log
 
 <!-- newest entry on top -->
+## 2026-08-28 (6) — Conditional DDPM surrogate + sensor noise benchmarking
+- **What:** Added conditional DDPM (denoising diffusion) as a 4th sequence architecture, plus a full sensor noise modeling pipeline. New files: `hts_tape_env/diffusion.py` (1D temporal U-Net, cosine/linear noise schedules, DDIM sampling, two-phase training with denoising + auxiliary heads), `hts_tape_env/noise_models.py` (GaussianNoise with scale sweep + RealisticSensorNoise with thermocouple drift/quantization, current transducer gain error, voltage tap signal-proportional noise), `tests/test_diffusion.py` (10 tests), `tests/test_noise_models.py` (13 tests). Modified all 5 `train_eval_*.py` scripts to accept `--archs` (gru/transformer/ssm/diffusion) and `--noise` (noiseless/gauss_0.5x/gauss_1x/gauss_2x/gauss_5x/realistic) CLI args. Updated `benchmark_all_envs.py` to forward both flags. The full benchmark matrix is now 4 archs × 6 noise levels × 2 sampling strategies × 5 conductors = 240 runs.
+- **Why:** (1) Diffusion models (RapDI-style) are a fundamentally different generative approach to PDE surrogates — generating the margin trajectory conditioned on operating point rather than discriminatively predicting it. (2) Real HTS quench detection systems must work with noisy sensors (thermocouples with drift/quantization, current transducers with gain error, nanovoltmeters with signal-proportional noise). The noise models let us quantify how each architecture degrades under realistic measurement uncertainty.
+- **Result/metric:**
+  - All 103 tests pass (10 diffusion + 13 noise + 80 existing)
+  - Diffusion surrogate matches the 5-head output interface (margin, breach_logit, istar_log, tstar, time_margin_log) for drop-in benchmark compatibility
+  - 6 noise configs available: noiseless, gauss_0.5x/1x/2x/5x, realistic (channel-specific)
+  - All 5 training scripts now support `--archs diffusion --noise gauss_2x realistic` etc.
+- **Next:** Run the full 240-run benchmark matrix on Polaris (5k GPU-hr allocation). Add robustness analysis (degradation curves: metric vs noise level per arch) and cross-conductor transfer learning (train Bi-2223, eval REBCO).
+
 ## 2026-08-28 (5) — README, CLAUDE.md, repo cleanup
 - **What:** Wrote comprehensive README.md covering project overview, repo structure, installation, conductor environments, surrogate pipeline (point + sequence + adaptive), benchmark CLI, Polaris HPC guide (setup, debug queue, production multi-node dispatch via pbsdsh, JAX/PyTorch GPU coexistence), and tests. Filled in CLAUDE.md with real project details (stack, domain notes, conventions). Moved legacy directories (event_selection, feature_utils, filters, process_data, qa_sim) to `legacy/` with a README. Updated .gitignore to ignore `models/*.png`, `models/*.csv`, `models/*.json` outputs.
 - **Why:** The README was a 4-line stub and CLAUDE.md was an unfilled template. A collaborator or new team member couldn't orient themselves in the repo or understand how to run on Polaris.

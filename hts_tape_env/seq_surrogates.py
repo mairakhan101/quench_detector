@@ -222,7 +222,10 @@ def build_model(arch: str, **kwargs) -> nn.Module:
         return TransformerSurrogate(**kwargs)
     if arch == "ssm":
         return SSMSurrogate(**kwargs)
-    raise KeyError(f"unknown arch '{arch}', expected 'gru', 'transformer', or 'ssm'")
+    if arch == "diffusion":
+        from hts_tape_env.diffusion import DiffusionSurrogate
+        return DiffusionSurrogate(**kwargs)
+    raise KeyError(f"unknown arch '{arch}', expected 'gru', 'transformer', 'ssm', or 'diffusion'")
 
 
 # ── Train / evaluate / persist ────────────────────────────────────────────────
