@@ -9,10 +9,13 @@
 
 set -euo pipefail
 
-export OPENBLAS_NUM_THREADS=8
-export OMP_NUM_THREADS=8
-export MKL_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export XLA_FLAGS="--xla_force_host_platform_device_count=1"
 export JAX_PLATFORMS=cpu
+export TF_NUM_INTEROP_THREADS=1
+export TF_NUM_INTRAOP_THREADS=1
 
 REPO=$HOME/fanc/magnets_rl/quench_detector
 PYTHON=$HOME/.conda/envs/quench_surr/bin/python
