@@ -16,3 +16,8 @@ __pycache__/
 .env
 .ipynb_checkpoints/
 core.*
+
+# Benchmark outputs (keep tracked .py files in models/, ignore generated artifacts)
+models/*.png
+models/*.csv
+models/*.json

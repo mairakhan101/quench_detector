@@ -1,6 +1,11 @@
 # Progress log
 
 <!-- newest entry on top -->
+## 2026-08-28 (5) — README, CLAUDE.md, repo cleanup
+- **What:** Wrote comprehensive README.md covering project overview, repo structure, installation, conductor environments, surrogate pipeline (point + sequence + adaptive), benchmark CLI, Polaris HPC guide (setup, debug queue, production multi-node dispatch via pbsdsh, JAX/PyTorch GPU coexistence), and tests. Filled in CLAUDE.md with real project details (stack, domain notes, conventions). Moved legacy directories (event_selection, feature_utils, filters, process_data, qa_sim) to `legacy/` with a README. Updated .gitignore to ignore `models/*.png`, `models/*.csv`, `models/*.json` outputs.
+- **Why:** The README was a 4-line stub and CLAUDE.md was an unfilled template. A collaborator or new team member couldn't orient themselves in the repo or understand how to run on Polaris.
+- **Result/metric:** README covers all 5 conductor envs, 3 surrogate tiers, adaptive sampling, benchmark system, and full Polaris workflow (setup → debug → production). Legacy code cleanly separated. All generated model artifacts now gitignored.
+
 ## 2026-08-28 (4) — Diffusion map analysis of thermal runaway parameter space
 - **What:** Created `scripts/diffusion_map_analysis.py` — Coifman–Lafon diffusion map on the (T₀, I, [λ]) operating-point manifold for all 4 analytic conductors (REBCO no-stab, REBCO stab, Bi-2223 no-stab, Bi-2223 Ag-stab). Computes Gaussian kernel → α-normalized Markov matrix → eigendecomposition. Produces per-conductor plots (2D embedding colored by I*/margin/runaway, sampling density vs boundary distance, boundary geometry in diffusion coords) plus cross-conductor summary (spectral gaps, effective dimensionality, sampling concentration, manifold extent).
 - **Why:** To discover the intrinsic geometry of the runaway boundary manifold and identify where the current uniform sampling is undersampled — directly informs boundary-aware adaptive sampling strategy for training set optimization (Genesis 13B roadmap).
