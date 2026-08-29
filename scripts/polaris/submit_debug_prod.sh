@@ -93,7 +93,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             mode="uniform"; [ "$i" -ge 5 ] && mode="adaptive"
             echo "  chunk $i: ${CONDUCTORS[$cond_idx]} ($mode)"
             submit "$SCRIPTS_DIR/run_benchmark_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
         ;;
 
@@ -108,7 +108,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             ci=$((i / 6)); ni=$((i % 6))
             echo "  chunk $i: ${CONDUCTORS[$ci]} / ${NOISES[$ni]}"
             submit "$SCRIPTS_DIR/run_noise_bench_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
         ;;
 
@@ -123,7 +123,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             ci=$((i / 6)); ni=$((i % 6))
             echo "  chunk $i: ${CONDUCTORS[$ci]} / ${NOISES[$ni]} (adaptive)"
             submit "$SCRIPTS_DIR/run_noise_bench_debug_chunk.pbs" "$i" "NOISE_BENCH_MODE=adaptive"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
         ;;
 
@@ -147,7 +147,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             in_range "$i" || continue
             echo "  chunk $i: ${PAIRS[$i]}"
             submit "$SCRIPTS_DIR/run_transfer_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
         ;;
 
@@ -162,7 +162,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
         for i in $(seq 0 4); do
             echo "  bench $i: ${CONDUCTORS[$i]} (uniform)"
             submit "$SCRIPTS_DIR/run_benchmark_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
 
         echo ""
@@ -174,7 +174,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             i=${NOISE_CHUNKS[$idx]}
             echo "  noise $i: ${NOISE_LABELS[$idx]}"
             submit "$SCRIPTS_DIR/run_noise_bench_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
 
         echo ""
@@ -185,7 +185,7 @@ for JOB_TYPE in "${JOB_TYPES[@]}"; do
             i=${XFER_CHUNKS[$idx]}
             echo "  xfer $i: ${XFER_LABELS[$idx]}"
             submit "$SCRIPTS_DIR/run_transfer_debug_chunk.pbs" "$i"
-            ((N_SUBMITTED++))
+            N_SUBMITTED=$((N_SUBMITTED + 1))
         done
         ;;
 
