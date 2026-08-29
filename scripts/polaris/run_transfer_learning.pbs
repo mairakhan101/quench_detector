@@ -1,0 +1,69 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q prod
+#PBS -l select=10:system=polaris
+#PBS -l walltime=03:00:00
+#PBS -l filesystems=home:eagle
+#PBS -l place=scatter
+#PBS -N transfer_learn
+#PBS -j oe
+
+# Cross-conductor transfer learning: 10 nodes, each running one
+# (source, target) pair across all architectures.
+#
+# Submit:  qsub scripts/polaris/run_transfer_learning.pbs
+#
+# Results: /eagle/fanc_ldrd/magnets_fem/transfer_learning/
+
+set -euo pipefail
+
+cat > /tmp/transfer_worker.sh << 'WORKER'
+#!/bin/bash
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+OUT=/eagle/fanc_ldrd/magnets_fem/transfer_learning
+SEED=42
+
+cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+
+# 10 pairs: 6 cross-conductor + 4 baselines
+PAIRS=(
+    "rebco_nostab:bi2223_nostab"
+    "bi2223_nostab:rebco_nostab"
+    "rebco_nostab:rebco_stab"
+    "rebco_stab:rebco_nostab"
+    "bi2223_nostab:rebco_stab"
+    "rebco_stab:bi2223_nostab"
+    "rebco_nostab:rebco_nostab"
+    "rebco_stab:rebco_stab"
+    "bi2223_nostab:bi2223_nostab"
+    "bi2223_agstab:bi2223_agstab"
+)
+
+RANK=$PBS_NODENUM
+PAIR=${PAIRS[$RANK]}
+
+echo "=== Node $RANK: transfer $PAIR on $(hostname) ==="
+echo "Date: $(date)"
+mkdir -p "$OUT"
+
+$PYTHON scripts/transfer_learning.py \
+    --scale production \
+    --pairs "$PAIR" \
+    --archs gru transformer ssm diffusion \
+    --seed $SEED \
+    --out-dir "$OUT"
+
+echo "=== Node $RANK done ($PAIR): $(date) ==="
+WORKER
+
+chmod +x /tmp/transfer_worker.sh
+pbsdsh /tmp/transfer_worker.sh
