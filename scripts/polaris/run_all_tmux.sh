@@ -12,10 +12,15 @@ set -euo pipefail
 export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
-export XLA_FLAGS="--xla_force_host_platform_device_count=1"
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 export JAX_PLATFORMS=cpu
+export XLA_FLAGS="--xla_cpu_multi_thread_eigen=false --xla_force_host_platform_device_count=1"
 export TF_NUM_INTEROP_THREADS=1
 export TF_NUM_INTRAOP_THREADS=1
+
+# Hard-limit threads to avoid login-node RLIMIT_NPROC crash
+ulimit -u 4096 2>/dev/null || true
 
 REPO=$HOME/fanc/magnets_rl/quench_detector
 PYTHON=$HOME/.conda/envs/quench_surr/bin/python
@@ -39,7 +44,7 @@ echo ""
 echo "=== [1/6] rebco_fd1d production ==="
 $PYTHON scripts/train_eval_rebco_fd1d.py \
     --n-samples 2000 --n-episodes 1000 --seq-epochs $EPOCHS \
-    --nx 100 --backend jax --seed $SEED --out-dir "$FD1D_OUT"
+    --nx 100 --backend numpy --seed $SEED --out-dir "$FD1D_OUT"
 
 # ── 2-6. Retrain Transformer + SSM with sinusoidal embeddings ──
 echo ""
@@ -74,7 +79,7 @@ echo ""
 echo "=== [6/6] rebco_fd1d sinusoidal ==="
 $PYTHON scripts/train_eval_rebco_fd1d.py \
     --n-samples 2000 --n-episodes 1000 --seq-epochs $EPOCHS \
-    --nx 100 --backend jax --seed $SEED \
+    --nx 100 --backend numpy --seed $SEED \
     --out-dir "$OUTDIR" --archs transformer ssm \
     --model-kwargs "$MODEL_KWARGS"
 
