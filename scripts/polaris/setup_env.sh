@@ -2,12 +2,13 @@
 # Setup conda environment for quench_detector on Polaris (ALCF)
 #
 # Run once:  bash scripts/polaris/setup_env.sh
-# Activate:  module use /soft/modulefiles && module load conda/2024-04-29 && conda activate quench_surr
+# Activate:  export PATH=/soft/applications/conda/2024-04-29/mconda3/bin:$PATH && \
+#            eval "$(conda shell.bash hook)" && conda activate quench_surr
 
 set -euo pipefail
 
-module use /soft/modulefiles
-module load conda/2024-04-29
+export PATH=/soft/applications/conda/2024-04-29/mconda3/bin:$PATH
+eval "$(conda shell.bash hook)"
 
 ENV_NAME="quench_surr"
 
@@ -20,6 +21,7 @@ else
     conda create -n "$ENV_NAME" python=3.11 -y
     conda activate "$ENV_NAME"
     pip install -r requirements.txt
+    pip install "jax[cpu]==0.4.29"
 fi
 
 echo "Done. Activate with:  conda activate $ENV_NAME"

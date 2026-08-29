@@ -1,0 +1,29 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -l place=scatter
+#PBS -N benchmark_quick_adaptive
+#PBS -j oe
+
+# Quick smoke test: all 5 conductors, adaptive sampling, ~25 min.
+#
+# Submit:  qsub scripts/polaris/run_benchmark_quick_adaptive.pbs
+
+set -euo pipefail
+export OPENBLAS_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export CUDA_VISIBLE_DEVICES=""
+export PATH=/soft/applications/conda/2024-04-29/mconda3/bin:$PATH
+eval "$(conda shell.bash hook)"
+conda activate quench_surr
+cd "${PBS_O_WORKDIR:-$HOME/fanc/magnets_rl/quench_detector}"
+
+python scripts/benchmark_all_envs.py \
+    --scale quick \
+    --adaptive --blend 0.5 \
+    --out-dir /eagle/fanc_ldrd/magnets_fem/benchmark_adaptive \
+    --seed 42
