@@ -102,7 +102,7 @@ def run_benchmark(bench: dict, scale: str, out_dir: str, seed: int,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scale", default="quick", choices=["quick", "production"])
+    ap.add_argument("--scale", default="quick", choices=["quick", "prod", "production"])
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", default="models")
     ap.add_argument("--only", type=str, default=None,
@@ -116,6 +116,8 @@ def main():
     ap.add_argument("--noise", nargs="+", default=None,
                     help="Noise configs (forwarded to each script)")
     args = ap.parse_args()
+    if args.scale == "production":
+        args.scale = "prod"
 
     results = {}
     for bench in BENCHMARKS:
