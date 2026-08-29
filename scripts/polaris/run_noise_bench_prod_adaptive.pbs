@@ -19,64 +19,8 @@
 
 set -euo pipefail
 
-cat > /tmp/noise_bench_adaptive_worker.sh << 'WORKER'
-#!/bin/bash
-set -euo pipefail
-
-export OPENBLAS_NUM_THREADS=8
-export OMP_NUM_THREADS=8
-export MKL_NUM_THREADS=8
-export JAX_PLATFORMS=cpu
+export NOISE_BENCH_OUT=/eagle/fanc_ldrd/magnets_fem/noise_bench_adaptive
+export NOISE_BENCH_MODE=adaptive
 
 REPO=$HOME/fanc/magnets_rl/quench_detector
-PYTHON=$HOME/.conda/envs/quench_surr/bin/python
-SEED=42
-OUT=/eagle/fanc_ldrd/magnets_fem/noise_bench_adaptive
-
-CONDUCTORS=(bi2223_nostab bi2223_agstab rebco_nostab rebco_stab rebco_fd1d)
-NOISE_LEVELS=(noiseless gauss_0.5x gauss_1x gauss_2x gauss_5x realistic)
-
-SCRIPTS=(
-    train_eval_bi2223_nostab.py
-    train_eval_bi2223_agstab.py
-    train_eval_rebco_nostab.py
-    train_eval_rebco_stab.py
-    train_eval_rebco_fd1d.py
-)
-
-ARGS_bi2223_nostab="--n-samples 2000 --n-eval-points 30 --seq-epochs 200"
-ARGS_bi2223_agstab="--n-samples 2000 --seq-episodes 500 --seq-epochs 200"
-ARGS_rebco_nostab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
-ARGS_rebco_stab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
-ARGS_rebco_fd1d="--n-samples 500 --n-episodes 100 --seq-epochs 100 --nx 100 --backend jax"
-
-RANK=$PBS_NODENUM
-COND_IDX=$((RANK / 6))
-NOISE_IDX=$((RANK % 6))
-
-CONDUCTOR=${CONDUCTORS[$COND_IDX]}
-NOISE=${NOISE_LEVELS[$NOISE_IDX]}
-SCRIPT=${SCRIPTS[$COND_IDX]}
-
-ARGS_VAR="ARGS_${CONDUCTOR}"
-ARGS="${!ARGS_VAR}"
-
-echo "=== Node $RANK: $CONDUCTOR / $NOISE (adaptive) on $(hostname) ==="
-echo "Date: $(date)"
-mkdir -p "$OUT"
-cd "$REPO"
-export PYTHONPATH="$REPO:${PYTHONPATH:-}"
-
-$PYTHON "scripts/$SCRIPT" \
-    $ARGS \
-    --archs gru transformer ssm diffusion \
-    --noise "$NOISE" \
-    --seed $SEED \
-    --out-dir "$OUT" \
-    --adaptive --blend 0.5
-
-echo "=== Node $RANK done ($CONDUCTOR / $NOISE): $(date) ==="
-WORKER
-
-chmod +x /tmp/noise_bench_adaptive_worker.sh
-pbsdsh /tmp/noise_bench_adaptive_worker.sh
+pbsdsh "$REPO/scripts/polaris/noise_bench_worker.sh"
