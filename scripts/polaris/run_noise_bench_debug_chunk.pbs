@@ -1,0 +1,91 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -N noise_dbg
+#PBS -j oe
+
+# Debug-queue chunk: run ONE (conductor, noise_level) combo with production
+# parameters on a single node (4 archs × ~15 min = ~60 min).
+#
+# TASK_ID selects the combo (0-29, same mapping as noise_bench_worker.sh):
+#   TASK_ID = conductor_idx * 6 + noise_idx
+#   conductor: bi2223_nostab(0), bi2223_agstab(1), rebco_nostab(2),
+#              rebco_stab(3), rebco_fd1d(4)
+#   noise:     noiseless(0), gauss_0.5x(1), gauss_1x(2), gauss_2x(3),
+#              gauss_5x(4), realistic(5)
+#
+# Sampling mode via NOISE_BENCH_MODE (default: uniform).
+#
+# Submit one:   qsub -v TASK_ID=0 scripts/polaris/run_noise_bench_debug_chunk.pbs
+# Adaptive:     qsub -v "TASK_ID=0,NOISE_BENCH_MODE=adaptive" ...
+# Submit all:   bash scripts/polaris/submit_debug_prod.sh --noise
+
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+SEED=42
+MODE="${NOISE_BENCH_MODE:-uniform}"
+
+if [ "$MODE" = "adaptive" ]; then
+    OUT="${NOISE_BENCH_OUT:-/eagle/fanc_ldrd/magnets_fem/noise_bench_adaptive}"
+else
+    OUT="${NOISE_BENCH_OUT:-/eagle/fanc_ldrd/magnets_fem/noise_bench_uniform}"
+fi
+
+cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+
+CONDUCTORS=(bi2223_nostab bi2223_agstab rebco_nostab rebco_stab rebco_fd1d)
+NOISE_LEVELS=(noiseless gauss_0.5x gauss_1x gauss_2x gauss_5x realistic)
+SCRIPTS=(
+    train_eval_bi2223_nostab.py
+    train_eval_bi2223_agstab.py
+    train_eval_rebco_nostab.py
+    train_eval_rebco_stab.py
+    train_eval_rebco_fd1d.py
+)
+
+ARGS_bi2223_nostab="--n-samples 2000 --n-eval-points 30 --seq-epochs 200"
+ARGS_bi2223_agstab="--n-samples 2000 --seq-episodes 500 --seq-epochs 200"
+ARGS_rebco_nostab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
+ARGS_rebco_stab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
+ARGS_rebco_fd1d="--n-samples 500 --n-episodes 100 --seq-epochs 100 --nx 100 --backend jax"
+
+TASK_ID=${TASK_ID:-0}
+COND_IDX=$((TASK_ID / 6))
+NOISE_IDX=$((TASK_ID % 6))
+
+CONDUCTOR=${CONDUCTORS[$COND_IDX]}
+NOISE=${NOISE_LEVELS[$NOISE_IDX]}
+SCRIPT=${SCRIPTS[$COND_IDX]}
+
+ARGS_VAR="ARGS_${CONDUCTOR}"
+ARGS="${!ARGS_VAR}"
+
+echo "=== Debug noise chunk $TASK_ID: $CONDUCTOR / $NOISE ($MODE) on $(hostname) ==="
+echo "Date: $(date)"
+mkdir -p "$OUT"
+
+EXTRA_ARGS=""
+if [ "$MODE" = "adaptive" ]; then
+    EXTRA_ARGS="--adaptive --blend 0.5"
+fi
+
+$PYTHON "scripts/$SCRIPT" \
+    $ARGS \
+    --archs gru transformer ssm diffusion \
+    --noise "$NOISE" \
+    --seed $SEED \
+    --out-dir "$OUT" \
+    $EXTRA_ARGS
+
+echo "=== Debug noise chunk $TASK_ID done ($CONDUCTOR / $NOISE): $(date) ==="

@@ -1,0 +1,651 @@
+<title>Thermal Runaway Error Maps</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+:root {
+  --surface: #f5f6f8;
+  --card: #ffffff;
+  --card-border: rgba(11,11,11,0.06);
+  --ink: #1a1e2b;
+  --ink-2: #4a4f5e;
+  --ink-muted: #7c8091;
+  --grid: #e4e5ea;
+  --baseline: #c0c2ca;
+  --nl-band: rgba(237,161,0,0.12);
+  --nl-stroke: rgba(237,161,0,0.35);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --good: #0ca30c;
+  --warn: #d98a00;
+  --crit: #d03b3b;
+  --tag-good-bg: rgba(12,163,12,0.1);
+  --tag-warn-bg: rgba(217,138,0,0.1);
+  --tag-crit-bg: rgba(208,59,59,0.1);
+  --tooltip-bg: #1a1e2b;
+  --tooltip-ink: #f0f1f3;
+  --focus-ring: rgba(42,120,214,0.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: #0f1117;
+    --card: #181b24;
+    --card-border: rgba(255,255,255,0.07);
+    --ink: #e8e9ed;
+    --ink-2: #a0a4b2;
+    --ink-muted: #6b6f80;
+    --grid: #262933;
+    --baseline: #3a3d48;
+    --nl-band: rgba(201,133,0,0.15);
+    --nl-stroke: rgba(201,133,0,0.4);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --good: #0ca30c;
+    --warn: #c98500;
+    --crit: #e34948;
+    --tag-good-bg: rgba(12,163,12,0.15);
+    --tag-warn-bg: rgba(201,133,0,0.15);
+    --tag-crit-bg: rgba(227,73,72,0.15);
+    --tooltip-bg: #e8e9ed;
+    --tooltip-ink: #181b24;
+    --focus-ring: rgba(57,135,229,0.4);
+  }
+}
+:root[data-theme="dark"] {
+  --surface: #0f1117;
+  --card: #181b24;
+  --card-border: rgba(255,255,255,0.07);
+  --ink: #e8e9ed;
+  --ink-2: #a0a4b2;
+  --ink-muted: #6b6f80;
+  --grid: #262933;
+  --baseline: #3a3d48;
+  --nl-band: rgba(201,133,0,0.15);
+  --nl-stroke: rgba(201,133,0,0.4);
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --good: #0ca30c;
+  --warn: #c98500;
+  --crit: #e34948;
+  --tag-good-bg: rgba(12,163,12,0.15);
+  --tag-warn-bg: rgba(201,133,0,0.15);
+  --tag-crit-bg: rgba(227,73,72,0.15);
+  --tooltip-bg: #e8e9ed;
+  --tooltip-ink: #181b24;
+  --focus-ring: rgba(57,135,229,0.4);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+
+header { margin-bottom: 32px; }
+header h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px; font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+header p {
+  color: var(--ink-2); font-size: 14px; margin-top: 6px;
+  max-width: 70ch;
+}
+header .tag-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 500;
+  padding: 3px 10px; border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+.tag-good { background: var(--tag-good-bg); color: var(--good); }
+.tag-warn { background: var(--tag-warn-bg); color: var(--warn); }
+.tag-crit { background: var(--tag-crit-bg); color: var(--crit); }
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.summary-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.summary-card .label {
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.summary-card .val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px; font-weight: 600;
+  color: var(--ink);
+}
+.summary-card .sub {
+  font-size: 12px; color: var(--ink-2); margin-top: 2px;
+}
+
+.conductor-section { margin-bottom: 36px; }
+.conductor-header {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.conductor-header h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px; font-weight: 600;
+  color: var(--ink);
+}
+.conductor-header .band-label {
+  font-size: 12px; color: var(--ink-muted);
+}
+.conductor-header .metrics {
+  display: flex; gap: 16px; margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.conductor-header .metric-item { color: var(--ink-2); }
+.conductor-header .metric-item strong { font-weight: 600; color: var(--ink); }
+
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 700px) {
+  .chart-row { grid-template-columns: 1fr; }
+}
+
+.chart-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 16px;
+  position: relative;
+}
+.chart-card .chart-title {
+  font-size: 12px; font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+.chart-card canvas {
+  width: 100%; height: 200px;
+  display: block;
+}
+
+.legend-row {
+  display: flex; gap: 14px; margin-top: 8px;
+  font-size: 11px; color: var(--ink-2);
+  flex-wrap: wrap;
+}
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-swatch {
+  width: 12px; height: 3px; border-radius: 1px; flex-shrink: 0;
+}
+
+.seq-table {
+  margin-top: 12px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+.seq-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--grid);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.seq-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--grid);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink);
+}
+.seq-table td:first-child {
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.seq-table .err-good { color: var(--good); }
+.seq-table .err-warn { color: var(--warn); }
+.seq-table .err-crit { color: var(--crit); }
+
+.tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-ink);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 0.12s;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+.tooltip.show { opacity: 1; }
+
+.note {
+  font-size: 12px; color: var(--ink-muted);
+  margin-top: 6px; font-style: italic;
+}
+</style>
+
+<div class="page">
+  <header>
+    <h1>Thermal Runaway Error Maps</h1>
+    <p>I*(T&#8320;) surrogate accuracy across all baseline conductor benchmarks. Best point surrogate per-T&#8320; relative error plus sequence surrogate aggregate metrics.</p>
+    <div class="tag-row">
+      <span class="tag tag-good">&lt; 1% median</span>
+      <span class="tag tag-warn">1 &ndash; 10%</span>
+      <span class="tag tag-crit">&gt; 10%</span>
+    </div>
+  </header>
+  <div class="summary-grid" id="summary-grid"></div>
+  <div id="conductors"></div>
+</div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const DATA = {"bi2223_nostab":{"label":"Bi-2223 no-stab","T0_range":[77.5,81.0],"nl_band":[79.5,81.0],"best_pt":"raw","point":{"A":{"T0":[77.5,77.5593,77.6186,77.678,77.7373,77.7966,77.8559,77.9153,77.9746,78.0339,78.0932,78.1525,78.2119,78.2712,78.3305,78.3898,78.4492,78.5085,78.5678,78.6271,78.6864,78.7458,78.8051,78.8644,78.9237,78.9831,79.0424,79.1017,79.161,79.2203,79.2797,79.339,79.3983,79.4576,79.5169,79.5763,79.6356,79.6949,79.7542,79.8136,79.8729,79.9322,79.9915,80.0508,80.1102,80.1695,80.2288,80.2881,80.3475,80.4068,80.4661,80.5254,80.5847,80.6441,80.7034,80.7627,80.822,80.8814,80.9407,81.0],"rel_err":[0.000694,0.000219,0.000321,0.000662,0.000506,0.000756,0.000618,0.000841,0.00069,0.000344,7.2e-05,0.000661,5.1e-05,0.000143,5.5e-05,0.000163,0.000261,0.000903,0.000273,0.00046,0.00052,0.000441,5.2e-05,8.9e-05,0.000691,0.000707,0.000223,2.1e-05,0.000553,6.5e-05,9e-06,7.1e-05,4.3e-05,0.000114,0.000109,0.000313,0.000468,0.000324,0.000213,0.00048,0.000338,0.00033,0.000382,0.000526,8.5e-05,0.000312,0.000339,0.000106,0.000257,8.4e-05,0.000156,8.2e-05,0.000432,3.4e-05,5.8e-05,3.1e-05,0.000224,0.000142,0.00046,0.000865],"Istar_pred":[270.36,268.97,267.74,266.21,264.99,263.67,262.45,261.58,259.92,258.97,258.03,257.2,256.01,254.97,253.97,252.92,251.88,250.71,249.85,249.01,247.75,246.96,245.82,244.79,243.95,242.58,241.79,240.7,239.75,238.56,237.38,236.19,235.03,233.85,232.68,231.61,230.28,229.14,228.72,228.1,227.12,226.49,225.72,224.73,224.08,223.21,226.77,226.3,225.8,225.09,224.58,223.86,223.36,222.58,221.87,221.15,220.38,219.68,218.89,218.46]},"raw":{"T0":[77.5,77.5593,77.6186,77.678,77.7373,77.7966,77.8559,77.9153,77.9746,78.0339,78.0932,78.1525,78.2119,78.2712,78.3305,78.3898,78.4492,78.5085,78.5678,78.6271,78.6864,78.7458,78.8051,78.8644,78.9237,78.9831,79.0424,79.1017,79.161,79.2203,79.2797,79.339,79.3983,79.4576,79.5169,79.5763,79.6356,79.6949,79.7542,79.8136,79.8729,79.9322,79.9915,80.0508,80.1102,80.1695,80.2288,80.2881,80.3475,80.4068,80.4661,80.5254,80.5847,80.6441,80.7034,80.7627,80.822,80.8814,80.9407,81.0],"rel_err":[0.000578,9.1e-05,0.000117,0.000914,0.00082,0.001197,0.001026,0.000429,0.001081,0.000564,0.000392,0.000393,0.000217,0.000239,0.000215,0.000343,0.000469,0.001086,0.000495,0.000275,0.000734,0.000135,0.000511,0.000603,0.000242,0.001063,0.000207,0.000463,0.000104,0.0004,0.000445,0.000493,0.000398,0.000513,0.000519,3.7e-05,0.000753,0.001168,0.001472,0.00024,0.001208,0.000624,0.000745,0.001813,0.001435,0.001742,0.002803,0.001432,0.000939,0.001071,0.000728,0.00088,0.000329,0.000715,0.000693,0.000627,0.000793,0.000708,0.000995,0.000427]}},"seq":{"gru":{"istar_median_rel_err":0.2398,"istar_95th_rel_err":0.342,"tstar_mae_K":56.98,"breach_accuracy":0.9296,"band_median_rel_err":0.2199,"band_95th_rel_err":0.2429},"transformer":{"istar_median_rel_err":0.1005,"istar_95th_rel_err":0.198,"tstar_mae_K":62.57,"breach_accuracy":0.9296,"band_median_rel_err":0.0743,"band_95th_rel_err":0.1088}},"Istar":[270.18,268.91,267.65,266.39,265.13,263.87,262.61,261.36,260.1,259.06,258.05,257.03,256.02,255.0,253.98,252.96,251.94,250.94,249.92,248.9,247.88,246.86,245.83,244.81,243.78,242.75,241.74,240.7,239.62,238.55,237.38,236.21,235.04,233.87,232.7,231.54,230.38,229.22,228.77,227.99,227.2,226.42,225.63,224.84,224.06,223.28,226.85,226.28,225.74,225.11,224.55,223.88,223.26,222.59,221.88,221.16,220.43,219.71,218.99,218.27]},"bi2223_agstab":{"label":"Bi-2223 Ag-stab","T0_range":[77.26,79.0],"nl_band":[78.0,79.0],"best_pt":"raw","point":{"A":{"T0":[77.26,77.2895,77.319,77.3485,77.378,77.4075,77.4369,77.4664,77.4959,77.5254,77.5549,77.5844,77.6139,77.6434,77.6729,77.7024,77.7319,77.7614,77.7908,77.8203,77.8498,77.8793,77.9088,77.9383,77.9678,77.9973,78.0268,78.0563,78.0858,78.1153,78.1447,78.1742,78.2037,78.2332,78.2627,78.2922,78.3217,78.3512,78.3807,78.4102,78.4397,78.4692,78.4986,78.5281,78.5576,78.5871,78.6166,78.6461,78.6756,78.7051,78.7346,78.7641,78.7936,78.8231],"rel_err":[0.000333,0.000116,0.000261,5.3e-05,0.000145,0.000176,0.000138,8.5e-05,8.1e-05,0.000222,4.6e-05,0.000103,7.4e-05,0.000128,2.2e-05,8.7e-05,0.000259,6e-06,0.000178,0.000126,0.000136,4.7e-05,4e-05,0.000162,9.2e-05,4.3e-05,2.1e-05,0.000204,3.4e-05,7.1e-05,0.000123,6.3e-05,0.000103,3.5e-05,0.000144,4.7e-05,1.7e-05,8.2e-05,0.000133,0.000259,4.5e-05,5.8e-05,0.000232,0.0001,7.5e-05,8.1e-05,5.4e-05,9e-06,2e-05,0.000278,7e-06,4.3e-05,0.000209,0.000331]},"raw":{"T0":[77.26,77.2895,77.319,77.3485,77.378,77.4075,77.4369,77.4664,77.4959,77.5254,77.5549,77.5844,77.6139,77.6434,77.6729,77.7024,77.7319,77.7614,77.7908,77.8203,77.8498,77.8793,77.9088,77.9383,77.9678,77.9973,78.0268,78.0563,78.0858,78.1153,78.1447,78.1742,78.2037,78.2332,78.2627,78.2922,78.3217,78.3512,78.3807,78.4102,78.4397,78.4692,78.4986,78.5281,78.5576,78.5871,78.6166,78.6461,78.6756,78.7051,78.7346,78.7641,78.7936,78.8231],"rel_err":[0.000382,0.000188,0.000118,0.000154,0.000107,0.000184,0.000114,5.1e-05,0.00011,0.000189,7.8e-05,0.000133,2.5e-05,0.000191,4.7e-05,2e-05,0.000375,0.000122,0.000101,2e-06,0.000213,4.2e-05,0.000136,0.000107,0.000135,8.8e-05,1e-06,0.000167,2.5e-05,7.9e-05,0.000133,5.9e-05,0.000101,9e-06,0.000113,6.3e-05,4.1e-05,2.3e-05,0.000116,0.00027,4.5e-05,4.6e-05,0.00027,0.000177,7.2e-05,8.5e-05,2.4e-05,6e-06,3.1e-05,0.00027,5.3e-05,2.2e-05,0.000168,0.000228]}},"seq":{"gru":{"istar_median_rel_err":0.0295,"istar_95th_rel_err":0.0631,"tstar_mae_K":0.114,"breach_accuracy":0.9949,"band_median_rel_err":0.0381,"band_95th_rel_err":0.0663},"transformer":{"istar_median_rel_err":0.0154,"istar_95th_rel_err":0.0175,"tstar_mae_K":0.389,"breach_accuracy":1.0,"band_median_rel_err":0.0151,"band_95th_rel_err":0.0171}},"Istar":[287.08,286.45,287.1,286.6,286.1,285.6,285.1,284.6,284.1,283.6,283.1,282.6,282.1,281.6,281.1,280.6,280.1,279.6,279.09,278.58,278.08,277.57,277.04,276.54,276.0,275.49,274.94,274.43,273.87,273.36,272.78,272.27,271.68,271.17,270.57,270.03,269.46,268.88,268.3,267.72,267.14,266.56,265.98,265.4,264.83,264.25,263.67,263.09,262.51,261.93,261.35,260.78,260.2,259.62,null,null,null,null,null,null]},"rebco_nostab":{"label":"REBCO no-redist","T0_range":[10.0,80.0],"nl_band":[70.0,80.0],"best_pt":"two_d","point":{"A":{"T0":[10.0,11.19,12.37,13.56,14.75,15.93,17.12,18.31,19.49,20.68,21.86,23.05,24.24,25.42,26.61,27.8,28.98,30.17,31.36,32.54,33.73,34.92,36.1,37.29,38.47,39.66,40.85,42.03,43.22,44.41,45.59,46.78,47.97,49.15,50.34,51.53,52.71,53.9,55.08,56.27,57.46,58.64,59.83,61.02,62.2,63.39,64.58,65.76,66.95,68.14,69.32,70.51,71.69,72.88,74.07,75.25,76.44,77.63,78.81,80.0],"rel_err":[0.002672,0.002641,0.003954,0.000805,0.00122,0.011343,0.002743,0.006796,0.001933,0.001935,0.001645,0.005118,0.002131,0.007711,0.00827,0.002091,0.001172,0.005305,0.005001,0.006621,0.005401,0.00204,0.002605,0.009915,0.004664,0.003671,0.008122,0.010477,0.002061,0.013481,0.012675,0.003206,0.001263,0.006615,0.006645,0.00844,0.003307,0.009827,0.000343,0.016205,0.001787,0.001199,0.000663,0.007907,0.00116,0.009931,0.003323,0.008652,0.001724,0.008708,0.009117,0.004929,0.005202,0.020822,0.019016,0.057599,0.198538,0.384919,0.642884,1.023388]},"two_d":{"T0":[10.0,11.19,12.37,13.56,14.75,15.93,17.12,18.31,19.49,20.68,21.86,23.05,24.24,25.42,26.61,27.8,28.98,30.17,31.36,32.54,33.73,34.92,36.1,37.29,38.47,39.66,40.85,42.03,43.22,44.41,45.59,46.78,47.97,49.15,50.34,51.53,52.71,53.9,55.08,56.27,57.46,58.64,59.83,61.02,62.2,63.39,64.58,65.76,66.95,68.14,69.32,70.51,71.69,72.88,74.07,75.25,76.44,77.63,78.81,80.0],"rel_err":[0.001504,0.000424,0.000934,0.000566,0.000118,1.7e-05,0.00157,0.002054,0.001289,0.001082,0.002102,0.000722,2.6e-05,0.000981,0.001694,0.000718,0.002598,0.002164,0.003511,0.00715,0.001336,8e-05,0.003158,0.001642,0.002808,0.002287,0.003934,0.000549,0.002347,0.002823,0.002245,0.001148,0.000848,0.002777,0.003738,0.003086,0.000563,0.006771,0.000139,0.010178,0.00262,0.003317,0.000612,0.003216,0.005121,0.010871,0.0034,0.001541,0.003281,0.003399,0.004508,0.000246,0.00435,0.012519,0.01226,0.053773,0.194203,0.37991,0.636942,1.016069]}},"seq":{"gru":{"istar_median_rel_err":0.3325,"istar_95th_rel_err":1.4104,"tstar_mae_K":15.38,"breach_accuracy":0.929,"band_median_rel_err":1.502,"band_95th_rel_err":2.1119},"transformer":{"istar_median_rel_err":0.1319,"istar_95th_rel_err":0.2599,"tstar_mae_K":0.612,"breach_accuracy":0.929,"band_median_rel_err":0.031,"band_95th_rel_err":0.1837}},"Istar":[731.27,725.38,719.33,713.03,706.59,699.87,693.04,685.99,678.68,671.26,663.62,655.7,647.69,639.48,631.07,622.45,613.58,604.61,595.44,586.08,576.53,566.7,556.8,546.71,536.44,525.98,515.33,504.51,493.41,482.25,470.91,459.39,447.7,435.83,423.78,411.57,399.18,386.62,373.82,360.94,347.9,334.68,321.3,307.76,294.05,280.18,266.15,251.95,237.6,223.08,208.41,193.58,178.59,163.41,148.12,132.67,117.07,101.32,85.41,69.35]},"rebco_stab":{"label":"REBCO Cu/SS redist","T0_range":[10.0,80.0],"nl_band":[70.0,80.0],"best_pt":"two_d","point":{"A":{"T0":[10.0,11.19,12.37,13.56,14.75,15.93,17.12,18.31,19.49,20.68,21.86,23.05,24.24,25.42,26.61,27.8,28.98,30.17,31.36,32.54,33.73,34.92,36.1,37.29,38.47,39.66,40.85,42.03,43.22,44.41,45.59,46.78,47.97,49.15,50.34,51.53,52.71,53.9,55.08,56.27,57.46,58.64,59.83,61.02,62.2,63.39,64.58,65.76,66.95,68.14,69.32,70.51],"rel_err":[0.02727,0.054192,0.009181,0.018553,0.008642,0.003526,0.008194,0.000387,0.009911,0.004446,0.003084,0.036118,0.012221,0.050459,0.019712,0.045829,0.023926,0.050946,0.07499,0.048108,0.050123,0.023799,0.049047,0.056875,0.079691,0.021864,0.051753,0.036381,0.017039,0.001051,0.039145,0.019806,0.026638,0.039011,0.050829,0.001225,0.04076,0.032982,0.052297,0.083979,0.052421,0.04339,0.025074,0.122128,0.056138,0.087471,0.036457,0.002497,0.038685,0.00045,0.05291,0.049229]},"two_d":{"T0":[10.0,11.19,12.37,13.56,14.75,15.93,17.12,18.31,19.49,20.68,21.86,23.05,24.24,25.42,26.61,27.8,28.98,30.17,31.36,32.54,33.73,34.92,36.1,37.29,38.47,39.66,40.85,42.03,43.22,44.41,45.59,46.78,47.97,49.15,50.34,51.53,52.71,53.9,55.08,56.27,57.46,58.64,59.83,61.02,62.2,63.39,64.58,65.76,66.95,68.14,69.32,70.51],"rel_err":[0.001008,0.001031,0.001937,0.003263,0.002063,0.001234,0.001725,0.00144,0.003904,0.003341,0.002146,0.003441,0.005489,0.009386,0.003849,0.005294,0.000115,0.003167,0.006832,0.005659,0.00884,0.008801,0.001554,0.009126,0.014371,0.001105,0.000468,0.006355,0.002921,0.007656,0.005398,0.005097,0.00904,0.005208,0.004063,0.00768,0.004351,0.001179,0.000872,0.006515,0.000152,0.006691,0.007146,0.002443,0.000943,0.001961,0.006409,0.01088,0.002788,0.009664,0.000573,0.006662]}},"seq":{"gru":{"istar_median_rel_err":0.2589,"istar_95th_rel_err":0.8251,"tstar_mae_K":12.8,"breach_accuracy":0.929,"band_median_rel_err":1.075,"band_95th_rel_err":1.1982},"transformer":{"istar_median_rel_err":0.0859,"istar_95th_rel_err":0.2579,"tstar_mae_K":0.732,"breach_accuracy":0.929,"band_median_rel_err":0.0786,"band_95th_rel_err":0.1525}},"Istar":[1011.13,997.74,984.32,970.88,957.41,943.92,930.41,916.87,903.31,889.73,876.12,862.49,848.83,835.15,821.45,807.71,793.95,780.19,766.38,752.54,738.69,724.8,710.87,696.94,682.96,668.98,654.96,640.92,626.84,612.75,598.64,584.52,570.37,556.21,542.03,527.85,513.67,499.5,485.33,471.19,457.07,442.98,428.95,414.97,401.07,387.26,373.55,359.98,346.55,333.29,320.23,307.4,null,null,null,null,null,null,null,null]},"rebco_fd1d":{"label":"REBCO 1D-FD","T0_range":[10.0,75.0],"nl_band":[70.0,80.0],"best_pt":"A","point":{"A":{"T0":[10.0,12.2414,14.4828,16.7241,18.9655,21.2069,23.4483,25.6897,27.931,30.1724,32.4138,34.6552,36.8966,39.1379,41.3793,43.6207,45.8621,48.1034,50.3448,52.5862,54.8276,57.069,59.3103,61.5517,63.7931,66.0345,68.2759,70.5172,72.7586,75.0],"rel_err":[0.076547,0.061854,0.046053,0.02903,0.010574,0.009454,0.031286,0.055101,0.08114,0.001861,0.007927,0.001658,0.001229,0.002635,0.012905,0.020219,0.003324,0.02249,0.014097,0.021864,0.158208,0.103886,0.040688,0.015702,0.053766,0.092865,0.130045,0.168171,0.224235,0.255928],"Istar_pred":[330.37,330.37,330.37,330.37,330.37,330.37,330.37,330.37,330.37,297.15,287.22,280.52,271.81,262.28,256.76,248.62,232.81,228.19,209.47,197.07,160.11,160.11,160.11,160.11,160.11,160.11,160.11,160.11,160.11,160.11]},"raw":{"T0":[10.0,12.2414,14.4828,16.7241,18.9655,21.2069,23.4483,25.6897,27.931,30.1724,32.4138,34.6552,36.8966,39.1379,41.3793,43.6207,45.8621,48.1034,50.3448,52.5862,54.8276,57.069,59.3103,61.5517,63.7931,66.0345,68.2759,70.5172,72.7586,75.0],"rel_err":[0.062523,0.047607,0.031565,0.014284,0.004452,0.024784,0.046948,0.071124,0.097559,0.023471,0.017891,0.006388,0.013312,0.016718,0.000417,0.008088,0.015979,0.011728,0.025088,0.030431,0.157623,0.103264,0.040022,0.016407,0.054497,0.093623,0.130829,0.168981,0.225085,0.2568],"Istar_pred":[335.39,335.39,335.39,335.39,335.39,335.39,335.39,335.39,335.39,304.69,294.69,282.78,268.52,258.58,253.59,245.66,229.85,225.79,207.14,195.34,160.23,160.23,160.23,160.23,160.23,160.23,160.23,160.23,160.23,160.23]}},"seq":{"gru":{"istar_median_rel_err":0.1596,"istar_95th_rel_err":0.3921,"tstar_mae_K":62.03,"breach_accuracy":0.929,"band_median_rel_err":0.0984,"band_95th_rel_err":0.1017},"transformer":{"istar_median_rel_err":0.1823,"istar_95th_rel_err":0.4705,"tstar_mae_K":63.81,"breach_accuracy":0.929,"band_median_rel_err":0.0775,"band_95th_rel_err":0.089}},"Istar":[357.75,352.15,346.32,340.25,333.9,327.27,320.35,313.12,305.57,297.7,289.51,280.99,272.14,262.98,253.49,243.69,233.58,223.17,212.47,201.47,190.21,178.68,166.91,157.64,151.94,146.51,141.69,137.06,130.79,127.49]}};
+
+const COND_ORDER = ['bi2223_nostab','bi2223_agstab','rebco_nostab','rebco_stab','rebco_fd1d'];
+const cs = getComputedStyle(document.documentElement);
+function cv(n) { return cs.getPropertyValue(n).trim(); }
+function errClass(v) { return v < 0.01 ? 'good' : v < 0.1 ? 'warn' : 'crit'; }
+function fmtPct(v) { return v < 0.001 ? (v*100).toFixed(3)+'%' : v < 0.01 ? (v*100).toFixed(2)+'%' : (v*100).toFixed(1)+'%'; }
+
+function bestSpec(d) {
+  let best = null, bestMed = Infinity;
+  for (const [spec, pd] of Object.entries(d.point)) {
+    const med = median(pd.rel_err);
+    if (med < bestMed) { bestMed = med; best = spec; }
+  }
+  return best;
+}
+function median(arr) {
+  const s = arr.filter(v => isFinite(v)).sort((a,b) => a - b);
+  if (!s.length) return NaN;
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+}
+function p95(arr) {
+  const s = arr.filter(v => isFinite(v)).sort((a,b) => a - b);
+  if (!s.length) return NaN;
+  return s[Math.min(Math.floor(s.length * 0.95), s.length - 1)];
+}
+
+// Summary cards
+const sg = document.getElementById('summary-grid');
+for (const key of COND_ORDER) {
+  const d = DATA[key];
+  const bp = bestSpec(d);
+  const pd = d.point[bp];
+  const med = median(pd.rel_err);
+  const cls = errClass(med);
+  const card = document.createElement('div');
+  card.className = 'summary-card';
+  card.innerHTML = `<div class="label">${d.label}</div><div class="val" style="color:var(--${cls})">${fmtPct(med)}</div><div class="sub">median I* rel err (${bp})</div>`;
+  sg.appendChild(card);
+}
+
+// Conductor sections
+const container = document.getElementById('conductors');
+const tooltip = document.getElementById('tooltip');
+
+for (const key of COND_ORDER) {
+  const d = DATA[key];
+  const bp = bestSpec(d);
+  const specKeys = Object.keys(d.point).filter(s => s !== 'B');
+  const sec = document.createElement('div');
+  sec.className = 'conductor-section';
+
+  const bpData = d.point[bp];
+  const medErr = median(bpData.rel_err);
+  const p95Err = p95(bpData.rel_err);
+
+  sec.innerHTML = `
+    <div class="conductor-header">
+      <h2>${d.label}</h2>
+      <span class="band-label">NL band ${d.nl_band[0]}–${d.nl_band[1]} K</span>
+      <div class="metrics">
+        <span class="metric-item">best: <strong>${bp}</strong></span>
+        <span class="metric-item">med: <strong>${fmtPct(medErr)}</strong></span>
+        <span class="metric-item">p95: <strong>${fmtPct(p95Err)}</strong></span>
+      </div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">I*(T₀) relative error vs operating temperature</div>
+        <canvas id="err-${key}" width="600" height="200"></canvas>
+        <div class="legend-row" id="leg-${key}"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">I*(T₀) prediction vs analytic ground truth</div>
+        <canvas id="curve-${key}" width="600" height="200"></canvas>
+        <div class="legend-row">
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--ink-muted)"></span>analytic</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--s1)"></span>${bp} surrogate</span>
+        </div>
+      </div>
+    </div>
+    <table class="seq-table">
+      <thead><tr><th>Sequence model</th><th>I* med rel err</th><th>I* p95 rel err</th><th>T* MAE</th><th>NL band med</th><th>Breach acc</th></tr></thead>
+      <tbody id="seqtb-${key}"></tbody>
+    </table>
+    ${key === 'rebco_fd1d' ? '<p class="note">FD1d surrogates evaluated against finite-difference solver ground truth (nx=50, binary search).</p>' : ''}
+  `;
+  container.appendChild(sec);
+
+  // Build legend
+  const legEl = document.getElementById(`leg-${key}`);
+  const seriesColors = [cv('--s1'), cv('--s2'), cv('--s3')];
+  specKeys.forEach((spec, i) => {
+    const c = seriesColors[Math.min(i, seriesColors.length - 1)];
+    legEl.innerHTML += `<span class="legend-item"><span class="legend-swatch" style="background:${c}"></span>${spec}${spec === bp ? ' (best)' : ''}</span>`;
+  });
+
+  // Seq table
+  const seqTb = document.getElementById(`seqtb-${key}`);
+  for (const [arch, sm] of Object.entries(d.seq)) {
+    const mc = errClass(sm.istar_median_rel_err);
+    const bc = errClass(sm.band_median_rel_err || 0);
+    seqTb.innerHTML += `<tr>
+      <td>${arch}</td>
+      <td class="err-${mc}">${fmtPct(sm.istar_median_rel_err)}</td>
+      <td>${fmtPct(sm.istar_95th_rel_err)}</td>
+      <td>${sm.tstar_mae_K.toFixed(2)} K</td>
+      <td class="err-${bc}">${sm.band_median_rel_err != null ? fmtPct(sm.band_median_rel_err) : '—'}</td>
+      <td>${(sm.breach_accuracy * 100).toFixed(1)}%</td>
+    </tr>`;
+  }
+}
+
+// ── Canvas drawing ──────────────────────────────────────────────────
+function drawCharts() {
+  const s1 = cv('--s1'), s2 = cv('--s2'), s3 = cv('--s3');
+  const ink = cv('--ink'), ink2 = cv('--ink-2'), muted = cv('--ink-muted');
+  const gridC = cv('--grid'), baseC = cv('--baseline');
+  const nlBand = cv('--nl-band'), nlStroke = cv('--nl-stroke');
+  const surfaceC = cv('--card');
+  const seriesColors = [s1, s2, s3];
+
+  for (const key of COND_ORDER) {
+    const d = DATA[key];
+    const bp = bestSpec(d);
+    const specKeys = Object.keys(d.point).filter(s => s !== 'B');
+
+    // ── Error chart ──
+    const errCanvas = document.getElementById(`err-${key}`);
+    const dpr = window.devicePixelRatio || 1;
+    const rect = errCanvas.getBoundingClientRect();
+    errCanvas.width = rect.width * dpr;
+    errCanvas.height = rect.height * dpr;
+    const ctx = errCanvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
+    const pad = { t: 10, r: 16, b: 32, l: 56 };
+    const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+    const allT0 = specKeys.flatMap(s => d.point[s].T0);
+    const allErr = specKeys.flatMap(s => d.point[s].rel_err).filter(v => isFinite(v) && v > 0);
+    const t0Min = Math.min(...allT0), t0Max = Math.max(...allT0);
+    const errMin = Math.max(1e-6, Math.min(...allErr) * 0.5);
+    const errMax = Math.min(10, Math.max(...allErr) * 2);
+    const logMin = Math.log10(errMin), logMax = Math.log10(errMax);
+
+    function xMap(t) { return pad.l + (t - t0Min) / (t0Max - t0Min) * pw; }
+    function yMap(e) { return pad.t + (1 - (Math.log10(Math.max(e, errMin)) - logMin) / (logMax - logMin)) * ph; }
+
+    // NL band
+    const nlL = Math.max(pad.l, xMap(d.nl_band[0]));
+    const nlR = Math.min(pad.l + pw, xMap(d.nl_band[1]));
+    if (nlR > nlL) {
+      ctx.fillStyle = nlBand;
+      ctx.fillRect(nlL, pad.t, nlR - nlL, ph);
+      ctx.strokeStyle = nlStroke;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(nlL, pad.t); ctx.lineTo(nlL, pad.t + ph); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(nlR, pad.t); ctx.lineTo(nlR, pad.t + ph); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Grid
+    ctx.strokeStyle = gridC; ctx.lineWidth = 1;
+    const logTicks = [];
+    for (let p = Math.ceil(logMin); p <= Math.floor(logMax); p++) logTicks.push(p);
+    if (!logTicks.length) { for (let p = Math.floor(logMin); p <= Math.ceil(logMax); p++) logTicks.push(p); }
+    for (const p of logTicks) {
+      const y = yMap(Math.pow(10, p));
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + pw, y); ctx.stroke();
+    }
+
+    // Baseline
+    ctx.strokeStyle = baseC; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.l, pad.t + ph); ctx.lineTo(pad.l + pw, pad.t + ph); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ph); ctx.stroke();
+
+    // Y axis labels
+    ctx.fillStyle = muted; ctx.font = '500 10px "JetBrains Mono", monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (const p of logTicks) {
+      const y = yMap(Math.pow(10, p));
+      const v = Math.pow(10, p);
+      ctx.fillText(v >= 0.01 ? (v*100).toFixed(0)+'%' : (v*100).toFixed(1)+'%', pad.l - 6, y);
+    }
+
+    // X axis
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const xSteps = pw > 400 ? 6 : 4;
+    for (let i = 0; i <= xSteps; i++) {
+      const t = t0Min + (t0Max - t0Min) * i / xSteps;
+      ctx.fillText(t.toFixed(1), xMap(t), pad.t + ph + 6);
+    }
+    ctx.fillText('T₀ [K]', pad.l + pw / 2, pad.t + ph + 18);
+
+    // Data points
+    specKeys.forEach((spec, si) => {
+      const pd = d.point[spec];
+      const color = seriesColors[Math.min(si, seriesColors.length - 1)];
+      const r = spec === bp ? 4 : 3;
+      ctx.fillStyle = color;
+      for (let i = 0; i < pd.T0.length; i++) {
+        const e = pd.rel_err[i];
+        if (!isFinite(e) || e <= 0) continue;
+        const x = xMap(pd.T0[i]), y = yMap(e);
+        if (y < pad.t || y > pad.t + ph) continue;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        // Surface ring for best spec
+        if (spec === bp) {
+          ctx.strokeStyle = surfaceC; ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.strokeStyle = 'transparent';
+        }
+      }
+    });
+
+    // Hover
+    errCanvas.addEventListener('pointermove', (ev) => {
+      const br = errCanvas.getBoundingClientRect();
+      const mx = ev.clientX - br.left, my = ev.clientY - br.top;
+      let closest = null, closestDist = 24;
+      for (const spec of specKeys) {
+        const pd = d.point[spec];
+        for (let i = 0; i < pd.T0.length; i++) {
+          const e = pd.rel_err[i];
+          if (!isFinite(e) || e <= 0) continue;
+          const x = xMap(pd.T0[i]), y = yMap(e);
+          const dist = Math.hypot(mx - x, my - y);
+          if (dist < closestDist) { closestDist = dist; closest = { spec, T0: pd.T0[i], err: e }; }
+        }
+      }
+      if (closest) {
+        tooltip.className = 'tooltip show';
+        tooltip.textContent = `${closest.spec}  T₀=${closest.T0.toFixed(2)} K  err=${fmtPct(closest.err)}`;
+        tooltip.style.left = (ev.clientX + 12) + 'px';
+        tooltip.style.top = (ev.clientY - 28) + 'px';
+      } else { tooltip.className = 'tooltip'; }
+    });
+    errCanvas.addEventListener('pointerleave', () => { tooltip.className = 'tooltip'; });
+
+    // ── I*(T0) curve chart ──
+    const curveCanvas = document.getElementById(`curve-${key}`);
+    const rect2 = curveCanvas.getBoundingClientRect();
+    curveCanvas.width = rect2.width * dpr;
+    curveCanvas.height = rect2.height * dpr;
+    const ctx2 = curveCanvas.getContext('2d');
+    ctx2.scale(dpr, dpr);
+    const W2 = rect2.width, H2 = rect2.height;
+    const pad2 = { t: 10, r: 16, b: 32, l: 56 };
+    const pw2 = W2 - pad2.l - pad2.r, ph2 = H2 - pad2.t - pad2.b;
+
+    const Ivals = d.Istar.filter(v => v != null);
+    const bpPreds = d.point[bp].Istar_pred || d.point[bp].rel_err.map((e, i) => {
+      const idx = d.point[bp].T0.indexOf ? i : i;
+      return null;
+    });
+    const allI = [...Ivals];
+    if (d.point[bp].Istar_pred) allI.push(...d.point[bp].Istar_pred);
+    const Imin = Math.min(...allI) * 0.95, Imax = Math.max(...allI) * 1.02;
+
+    const T0g = d.point[bp].T0;
+    const tMin2 = Math.min(...T0g), tMax2 = Math.max(...T0g);
+
+    function xMap2(t) { return pad2.l + (t - tMin2) / (tMax2 - tMin2) * pw2; }
+    function yMap2(I) { return pad2.t + (1 - (I - Imin) / (Imax - Imin)) * ph2; }
+
+    // NL band
+    const nlL2 = Math.max(pad2.l, xMap2(d.nl_band[0]));
+    const nlR2 = Math.min(pad2.l + pw2, xMap2(d.nl_band[1]));
+    if (nlR2 > nlL2) {
+      ctx2.fillStyle = nlBand;
+      ctx2.fillRect(nlL2, pad2.t, nlR2 - nlL2, ph2);
+      ctx2.strokeStyle = nlStroke;
+      ctx2.lineWidth = 1;
+      ctx2.setLineDash([3, 3]);
+      ctx2.beginPath(); ctx2.moveTo(nlL2, pad2.t); ctx2.lineTo(nlL2, pad2.t + ph2); ctx2.stroke();
+      ctx2.beginPath(); ctx2.moveTo(nlR2, pad2.t); ctx2.lineTo(nlR2, pad2.t + ph2); ctx2.stroke();
+      ctx2.setLineDash([]);
+    }
+
+    // Grid
+    ctx2.strokeStyle = gridC; ctx2.lineWidth = 1;
+    const Isteps = 5;
+    for (let i = 0; i <= Isteps; i++) {
+      const Iv = Imin + (Imax - Imin) * i / Isteps;
+      const y = yMap2(Iv);
+      ctx2.beginPath(); ctx2.moveTo(pad2.l, y); ctx2.lineTo(pad2.l + pw2, y); ctx2.stroke();
+    }
+    ctx2.strokeStyle = baseC; ctx2.lineWidth = 1;
+    ctx2.beginPath(); ctx2.moveTo(pad2.l, pad2.t + ph2); ctx2.lineTo(pad2.l + pw2, pad2.t + ph2); ctx2.stroke();
+    ctx2.beginPath(); ctx2.moveTo(pad2.l, pad2.t); ctx2.lineTo(pad2.l, pad2.t + ph2); ctx2.stroke();
+
+    // Y labels
+    ctx2.fillStyle = muted; ctx2.font = '500 10px "JetBrains Mono", monospace'; ctx2.textAlign = 'right'; ctx2.textBaseline = 'middle';
+    for (let i = 0; i <= Isteps; i++) {
+      const Iv = Imin + (Imax - Imin) * i / Isteps;
+      ctx2.fillText(Iv.toFixed(0), pad2.l - 6, yMap2(Iv));
+    }
+    // X labels
+    ctx2.textAlign = 'center'; ctx2.textBaseline = 'top';
+    for (let i = 0; i <= xSteps; i++) {
+      const t = tMin2 + (tMax2 - tMin2) * i / xSteps;
+      ctx2.fillText(t.toFixed(1), xMap2(t), pad2.t + ph2 + 6);
+    }
+    ctx2.fillText('T₀ [K]', pad2.l + pw2 / 2, pad2.t + ph2 + 18);
+
+    // Analytic line
+    ctx2.strokeStyle = muted; ctx2.lineWidth = 2; ctx2.setLineDash([]);
+    ctx2.beginPath();
+    let started = false;
+    for (let i = 0; i < T0g.length; i++) {
+      const Ia = d.Istar[i] != null ? d.Istar[i] : null;
+      if (Ia == null) continue;
+      const x = xMap2(T0g[i]), y = yMap2(Ia);
+      if (!started) { ctx2.moveTo(x, y); started = true; } else ctx2.lineTo(x, y);
+    }
+    ctx2.stroke();
+
+    // Surrogate prediction
+    if (d.point[bp].Istar_pred) {
+      ctx2.strokeStyle = s1; ctx2.lineWidth = 2;
+      ctx2.beginPath();
+      started = false;
+      for (let i = 0; i < T0g.length; i++) {
+        const Ip = d.point[bp].Istar_pred[i];
+        if (Ip == null || !isFinite(Ip)) continue;
+        const x = xMap2(T0g[i]), y = yMap2(Ip);
+        if (!started) { ctx2.moveTo(x, y); started = true; } else ctx2.lineTo(x, y);
+      }
+      ctx2.stroke();
+
+      // Error fill
+      ctx2.fillStyle = s1.replace(')', ',0.1)').replace('rgb', 'rgba');
+      ctx2.beginPath();
+      for (let i = 0; i < T0g.length; i++) {
+        const Ia = d.Istar[i], Ip = d.point[bp].Istar_pred[i];
+        if (Ia == null || Ip == null) continue;
+        ctx2.lineTo(xMap2(T0g[i]), yMap2(Ia));
+      }
+      for (let i = T0g.length - 1; i >= 0; i--) {
+        const Ip = d.point[bp].Istar_pred[i];
+        if (Ip == null || !isFinite(Ip)) continue;
+        ctx2.lineTo(xMap2(T0g[i]), yMap2(Ip));
+      }
+      ctx2.closePath(); ctx2.fill();
+    }
+
+    // Hover on curve chart
+    curveCanvas.addEventListener('pointermove', (ev) => {
+      const br = curveCanvas.getBoundingClientRect();
+      const mx = ev.clientX - br.left;
+      const t = tMin2 + (mx - pad2.l) / pw2 * (tMax2 - tMin2);
+      let closestIdx = 0, closestDist = Infinity;
+      for (let i = 0; i < T0g.length; i++) {
+        const dist = Math.abs(T0g[i] - t);
+        if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+      }
+      const Ia = d.Istar[closestIdx];
+      const Ip = d.point[bp].Istar_pred ? d.point[bp].Istar_pred[closestIdx] : null;
+      if (Ia != null) {
+        tooltip.className = 'tooltip show';
+        let txt = `T₀=${T0g[closestIdx].toFixed(2)} K  I*=${Ia.toFixed(1)} A`;
+        if (Ip != null) txt += `  pred=${Ip.toFixed(1)} A`;
+        tooltip.textContent = txt;
+        tooltip.style.left = (ev.clientX + 12) + 'px';
+        tooltip.style.top = (ev.clientY - 28) + 'px';
+      } else { tooltip.className = 'tooltip'; }
+    });
+    curveCanvas.addEventListener('pointerleave', () => { tooltip.className = 'tooltip'; });
+  }
+}
+
+drawCharts();
+window.addEventListener('resize', drawCharts);
+
+const mql = window.matchMedia('(prefers-color-scheme: dark)');
+mql.addEventListener('change', () => setTimeout(drawCharts, 50));
+new MutationObserver(() => setTimeout(drawCharts, 50)).observe(
+  document.documentElement, { attributes: true, attributeFilter: ['data-theme'] }
+);
+</script>
