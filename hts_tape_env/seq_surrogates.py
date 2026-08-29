@@ -56,6 +56,7 @@ Usage
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -70,6 +71,18 @@ from hts_tape_env.seq_data import (
     Normalizer,
     collate_episodes,
 )
+
+
+# ── Positional encoding ────────────────────────────────────────────────────
+
+def _sinusoidal_pos_encoding(max_len: int, d_model: int) -> torch.Tensor:
+    """Vaswani et al. sinusoidal positional encoding [max_len, d_model]."""
+    pos = torch.arange(max_len).unsqueeze(1).float()
+    div = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+    pe = torch.zeros(max_len, d_model)
+    pe[:, 0::2] = torch.sin(pos * div)
+    pe[:, 1::2] = torch.cos(pos * div)
+    return pe
 
 
 # ── Models ──────────────────────────────────────────────────────────────────
@@ -107,10 +120,13 @@ class TransformerSurrogate(nn.Module):
 
     def __init__(self, n_features: int = 4, d_model: int = 64, n_heads: int = 4,
                  n_layers: int = 2, dim_feedforward: int = 128, dropout: float = 0.1,
-                 max_len: int = 1024):
+                 max_len: int = 1024, pos_emb: str = "sinusoidal"):
         super().__init__()
         self.in_proj = nn.Linear(n_features, d_model)
-        self.pos = nn.Parameter(torch.randn(1, max_len, d_model) * 0.02)
+        if pos_emb == "sinusoidal":
+            self.register_buffer("pos", _sinusoidal_pos_encoding(max_len, d_model).unsqueeze(0))
+        else:
+            self.pos = nn.Parameter(torch.randn(1, max_len, d_model) * 0.02)
         layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=n_heads, dim_feedforward=dim_feedforward,
             dropout=dropout, batch_first=True, activation="gelu",
@@ -189,9 +205,14 @@ class SSMSurrogate(nn.Module):
     """State-space model surrogate using stacked diagonal S4D blocks."""
 
     def __init__(self, n_features: int = 4, hidden: int = 64, n_layers: int = 2,
-                 d_state: int = 64, dropout: float = 0.1):
+                 d_state: int = 64, dropout: float = 0.1,
+                 pos_emb: str = "sinusoidal", max_len: int = 1024):
         super().__init__()
         self.in_proj = nn.Linear(n_features, hidden)
+        if pos_emb == "sinusoidal":
+            self.register_buffer("pos", _sinusoidal_pos_encoding(max_len, hidden).unsqueeze(0))
+        else:
+            self.pos = None
         self.blocks = nn.ModuleList([S4DBlock(hidden, d_state, dropout) for _ in range(n_layers)])
         self.margin_head = nn.Linear(hidden, 1)
         self.breach_head = nn.Linear(hidden, 1)
@@ -202,6 +223,8 @@ class SSMSurrogate(nn.Module):
     def forward(self, X: torch.Tensor, lengths: torch.Tensor) -> dict:
         B, T, _ = X.shape
         h = self.in_proj(X)
+        if self.pos is not None:
+            h = h + self.pos[:, :T]
         for block in self.blocks:
             h = block(h, lengths)
         idx = (lengths - 1).clamp(min=0).to(X.device)

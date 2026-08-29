@@ -165,7 +165,12 @@ def main():
                     help="Sequence architectures to train (gru transformer ssm diffusion)")
     ap.add_argument("--noise", nargs="+", default=["noiseless"],
                     help="Noise configs to sweep (noiseless gauss_0.5x gauss_1x gauss_2x gauss_5x realistic)")
+    ap.add_argument("--model-kwargs", default=None,
+                    help='JSON string of extra model kwargs, e.g. \'{"pos_emb": "sinusoidal"}\'')
     args = ap.parse_args()
+
+    import json as _json
+    extra_model_kwargs = _json.loads(args.model_kwargs) if args.model_kwargs else {}
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -244,6 +249,7 @@ def main():
                         result = train_seq_surrogate(
                             df_train, arch=arch, epochs=args.seq_epochs, seed=args.seed,
                             feature_cols=feat_cols,
+                            model_kwargs=extra_model_kwargs if extra_model_kwargs else None,
                         )
                     key = tag
                     seq_results[key] = result

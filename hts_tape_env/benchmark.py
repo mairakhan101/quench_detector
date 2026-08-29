@@ -311,6 +311,10 @@ def plot_error_surfaces(
     time_margin_pred: np.ndarray | None = None,
     lam_grid: np.ndarray | None = None,
     out_dir: str | Path = "models",
+    plot_3d: bool = False,
+    train_T0: np.ndarray | None = None,
+    train_lam: np.ndarray | None = None,
+    title_suffix: str = "",
 ) -> Path:
     """
     4-panel error surface figure inspired by the paper's equilibrium branch /
@@ -327,6 +331,16 @@ def plot_error_surfaces(
     yp = np.asarray(Istar_pred)
 
     is_2d = lam_grid is not None and yt.ndim == 2
+
+    if is_2d and plot_3d:
+        return plot_error_surfaces_3d(
+            conductor_name, T0, lam_grid, yt, yp,
+            train_T0=train_T0, train_lam=train_lam,
+            nonlinear_band=nonlinear_band,
+            time_margin_analytic=time_margin_analytic,
+            time_margin_pred=time_margin_pred,
+            out_dir=out_dir, title_suffix=title_suffix,
+        )
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
@@ -469,3 +483,140 @@ def _plot_error_surfaces_2d(fig, axes, T0, lam, yt, yp, band, curvature,
         ax.set_xlabel("T₀ [K]")
         ax.set_ylabel("λ [W/m/K]")
     ax.set_title("Time-margin error")
+
+
+# ── 3D error surface plots (Genesis-style) ─────────────────────────────────
+
+def plot_error_surfaces_3d(
+    conductor_name: str,
+    T0_grid: np.ndarray,
+    lam_grid: np.ndarray,
+    Istar_analytic: np.ndarray,
+    Istar_pred: np.ndarray,
+    *,
+    train_T0: np.ndarray | None = None,
+    train_lam: np.ndarray | None = None,
+    nonlinear_band: tuple[float, float] | None = None,
+    time_margin_analytic: np.ndarray | None = None,
+    time_margin_pred: np.ndarray | None = None,
+    out_dir: str | Path = "models",
+    title_suffix: str = "",
+) -> Path:
+    """
+    Genesis-style 3D surface plots for 2-parameter (T₀, λ) conductors.
+
+    4-panel figure:
+      1. Analytic I*(T₀, λ) surface
+      2. Surrogate I*(T₀, λ) surface (same colorscale)
+      3. Relative error surface (log-scaled facecolors)
+      4. Training density heatmap with undersampled region overlay
+
+    train_T0, train_lam: per-episode operating points for density overlay.
+    """
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    T0 = np.asarray(T0_grid)
+    lam = np.asarray(lam_grid)
+    yt = np.asarray(Istar_analytic)
+    yp = np.asarray(Istar_pred)
+    re = _rel_err(yt, yp)
+
+    TT, LL = np.meshgrid(T0, lam)
+
+    # Shared color limits for analytic/surrogate comparison
+    valid_mask = np.isfinite(yt) & np.isfinite(yp)
+    all_I = np.concatenate([yt[valid_mask], yp[valid_mask]])
+    vmin, vmax = np.nanmin(all_I), np.nanmax(all_I)
+
+    fig = plt.figure(figsize=(20, 16))
+
+    # Panel 1: Analytic I*(T₀, λ)
+    ax1 = fig.add_subplot(2, 2, 1, projection="3d")
+    yt_plot = np.where(np.isfinite(yt), yt, np.nan)
+    surf1 = ax1.plot_surface(TT, LL, yt_plot, cmap="viridis",
+                              vmin=vmin, vmax=vmax, alpha=0.9,
+                              linewidth=0, antialiased=True)
+    fig.colorbar(surf1, ax=ax1, shrink=0.5, label="I* [A]")
+    ax1.set_xlabel("T₀ [K]")
+    ax1.set_ylabel("λ [W/m/K]")
+    ax1.set_zlabel("I* [A]")
+    ax1.set_title("Analytic I*(T₀, λ)")
+    ax1.view_init(elev=25, azim=-60)
+
+    # Panel 2: Surrogate I*(T₀, λ)
+    ax2 = fig.add_subplot(2, 2, 2, projection="3d")
+    yp_plot = np.where(np.isfinite(yp), yp, np.nan)
+    surf2 = ax2.plot_surface(TT, LL, yp_plot, cmap="viridis",
+                              vmin=vmin, vmax=vmax, alpha=0.9,
+                              linewidth=0, antialiased=True)
+    fig.colorbar(surf2, ax=ax2, shrink=0.5, label="I* [A]")
+    ax2.set_xlabel("T₀ [K]")
+    ax2.set_ylabel("λ [W/m/K]")
+    ax2.set_zlabel("I* [A]")
+    ax2.set_title(f"Surrogate I*(T₀, λ){title_suffix}")
+    ax2.view_init(elev=25, azim=-60)
+
+    # Panel 3: Relative error surface
+    ax3 = fig.add_subplot(2, 2, 3, projection="3d")
+    re_plot = np.where(np.isfinite(re), re, np.nan)
+    re_log = np.log10(np.clip(re_plot, 1e-6, None))
+    norm = plt.Normalize(vmin=-5, vmax=0)
+    colors = plt.cm.Reds(norm(re_log))
+    surf3 = ax3.plot_surface(TT, LL, re_plot, facecolors=colors, alpha=0.9,
+                              linewidth=0, antialiased=True)
+    sm = plt.cm.ScalarMappable(cmap="Reds", norm=matplotlib.colors.LogNorm(1e-5, 1.0))
+    fig.colorbar(sm, ax=ax3, shrink=0.5, label="|rel err|")
+    ax3.set_xlabel("T₀ [K]")
+    ax3.set_ylabel("λ [W/m/K]")
+    ax3.set_zlabel("|rel err|")
+    ax3.set_title("Relative error")
+    ax3.view_init(elev=25, azim=-60)
+
+    # Panel 4: Training density + undersampled regions
+    ax4 = fig.add_subplot(2, 2, 4)
+    if train_T0 is not None and train_lam is not None:
+        T0_tr = np.asarray(train_T0)
+        lam_tr = np.asarray(train_lam)
+        # 2D histogram over the surface grid
+        T0_edges = np.linspace(T0.min(), T0.max(), min(len(T0), 30) + 1)
+        lam_edges = np.linspace(lam.min(), lam.max(), min(len(lam), 30) + 1)
+        H, xe, ye = np.histogram2d(T0_tr, lam_tr, bins=[T0_edges, lam_edges])
+        xc = 0.5 * (xe[:-1] + xe[1:])
+        yc = 0.5 * (ye[:-1] + ye[1:])
+        XX, YY = np.meshgrid(xc, yc)
+
+        c = ax4.pcolormesh(XX, YY, H.T, cmap="Blues", shading="auto")
+        fig.colorbar(c, ax=ax4, label="# training episodes")
+
+        # Undersampled overlay: regions below median/4
+        median_density = np.median(H[H > 0]) if np.any(H > 0) else 1
+        undersamp = (H.T < median_density / 4) & (H.T >= 0)
+        if np.any(undersamp):
+            ax4.contourf(XX, YY, undersamp.astype(float), levels=[0.5, 1.5],
+                         colors=["red"], alpha=0.25)
+            ax4.contour(XX, YY, undersamp.astype(float), levels=[0.5],
+                        colors=["red"], linewidths=1.5, linestyles="--")
+    else:
+        # No training data — show error heatmap instead
+        re_2d = np.where(np.isfinite(re), re, np.nan)
+        c = ax4.pcolormesh(TT, LL, re_2d, cmap="Reds", shading="auto",
+                           norm=matplotlib.colors.LogNorm(
+                               vmin=1e-5, vmax=max(np.nanmax(re_2d), 1e-2)))
+        fig.colorbar(c, ax=ax4, label="|rel err|")
+
+    if nonlinear_band is not None:
+        ax4.axvspan(*nonlinear_band, alpha=0.15, color="orange", label="NL band")
+        ax4.legend(fontsize=7)
+    ax4.set_xlabel("T₀ [K]")
+    ax4.set_ylabel("λ [W/m/K]")
+    ax4.set_title("Training density (red = undersampled)")
+
+    fig.suptitle(f"{conductor_name} — I*(T₀, λ) error surfaces", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    path = out_dir / f"{conductor_name}_error_surfaces_3d.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
