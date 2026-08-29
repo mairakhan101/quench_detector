@@ -330,6 +330,9 @@ def generate_adaptive_rollout_dataset(
     T0_vals = T0_sampler(rng, n_episodes)
     if lam_sampler is not None:
         lam_vals = lam_sampler(rng, n_episodes)
+    elif hasattr(env, "lam_range"):
+        lo, hi = env.lam_range
+        lam_vals = rng.uniform(lo, hi, size=n_episodes)
     else:
         lam_vals = [None] * n_episodes
 
