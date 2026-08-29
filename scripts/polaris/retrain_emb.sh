@@ -1,7 +1,7 @@
 #!/bin/bash
 #PBS -A fanc_ldrd
 #PBS -q prod
-#PBS -l select=1:system=polaris
+#PBS -l select=2:system=polaris
 #PBS -l walltime=06:00:00
 #PBS -l filesystems=home:eagle
 #PBS -N retrain_emb
