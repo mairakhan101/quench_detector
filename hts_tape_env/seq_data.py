@@ -99,6 +99,90 @@ class EpisodeSequenceDataset(Dataset):
         )
 
 
+TEACHER_FEATURES = ["T0_K", "I_true_A", "voltage_true_V", "T_surface_true_K", "lam"]
+
+
+class DistillationDataset(Dataset):
+    """Student dataset augmented with pre-computed teacher soft targets.
+
+    The teacher sees extra features (e.g. λ) the student cannot observe.
+    Soft targets are generated once at construction time so training pays
+    no per-epoch inference cost.
+    """
+
+    def __init__(self, df, teacher_result,
+                 student_feature_cols=TRUE_FEATURES, dump_threshold: float = 0.05):
+        self.student_ds = EpisodeSequenceDataset(
+            df, feature_cols=student_feature_cols, dump_threshold=dump_threshold)
+
+        teacher_feat = list(teacher_result.meta.get("features", TEACHER_FEATURES))
+        teacher_ds = EpisodeSequenceDataset(
+            df, feature_cols=teacher_feat, dump_threshold=dump_threshold)
+
+        self.soft_targets = _generate_soft_targets(teacher_ds, teacher_result)
+
+    def __len__(self) -> int:
+        return len(self.student_ds)
+
+    def __getitem__(self, idx: int):
+        student_item = self.student_ds[idx]
+        soft = self.soft_targets[idx]
+        return student_item + (soft["margin_soft"], soft["breach_logit_soft"],
+                               soft["istar_log_soft"], soft["tstar_soft"],
+                               soft["tm_log_soft"])
+
+
+def _generate_soft_targets(teacher_ds: EpisodeSequenceDataset, teacher_result) -> list[dict]:
+    """Run teacher once per episode to get raw (pre-activation) outputs."""
+    model = teacher_result.model.eval()
+    device = next(model.parameters()).device
+    targets = []
+    with torch.no_grad():
+        for i in range(len(teacher_ds)):
+            X_t = teacher_ds[i][0]  # [T, n_features] already normalized
+            Xt = X_t.unsqueeze(0).to(device)
+            lengths = torch.tensor([X_t.shape[0]], device=device)
+            out = model(Xt, lengths)
+            targets.append({
+                "margin_soft": out["margin"][0].cpu(),
+                "breach_logit_soft": out["breach_logit"][0].cpu(),
+                "istar_log_soft": out["istar_log"][0].cpu(),
+                "tstar_soft": out["tstar"][0].cpu(),
+                "tm_log_soft": out["time_margin_log"][0].cpu(),
+            })
+    return targets
+
+
+def collate_distillation(batch) -> dict:
+    """Collate for DistillationDataset: hard targets + padded teacher soft targets."""
+    hard_batch = [(item[:7]) for item in batch]
+    d = collate_episodes(hard_batch)
+
+    T = int(d["lengths"].max())
+    B = len(batch)
+    margin_soft = torch.zeros(B, T)
+    breach_logit_soft = torch.zeros(B, T)
+    istar_log_soft = torch.zeros(B)
+    tstar_soft = torch.zeros(B)
+    tm_log_soft = torch.zeros(B)
+
+    for i, item in enumerate(batch):
+        ms, bls, ils, ts, tls = item[7], item[8], item[9], item[10], item[11]
+        t = ms.shape[0]
+        margin_soft[i, :t] = ms
+        breach_logit_soft[i, :t] = bls
+        istar_log_soft[i] = ils
+        tstar_soft[i] = ts
+        tm_log_soft[i] = tls
+
+    d["margin_soft"] = margin_soft
+    d["breach_logit_soft"] = breach_logit_soft
+    d["istar_log_soft"] = istar_log_soft
+    d["tstar_soft"] = tstar_soft
+    d["tm_log_soft"] = tm_log_soft
+    return d
+
+
 def collate_episodes(batch) -> dict:
     """Pad a batch of ragged episodes to the batch's own max length; returns a dict of tensors."""
     lengths = torch.tensor([item[0].shape[0] for item in batch], dtype=torch.long)

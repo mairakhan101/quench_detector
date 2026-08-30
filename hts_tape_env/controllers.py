@@ -49,6 +49,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+import torch
+import torch.nn as nn
+import gymnasium
 
 
 @dataclass
@@ -128,4 +131,245 @@ def evaluate(env, controller: BangBangController, n_episodes: int, seed0: int) -
         miss_rate=misses / n_episodes,
         false_alarm_rate=false_alarms / n_episodes,
         mean_final_margin=float(np.mean(final_margins)),
+    )
+
+
+# ── Continuous current control ────────────────────────────────────────────────
+
+class CurrentControlEnv(gymnasium.Wrapper):
+    """Wraps QuenchDetectorEnv to accept continuous current fraction as action.
+
+    Action: Box(1) — desired I/I* fraction in [0, I_max_frac].
+    Observation: Box(7) — original [T0, I, V, T_surface] + [margin_pred, I_star_pred, breach_prob].
+
+    The wrapper overrides the env's internal I_frac before each step so the
+    physics engine advances at the controller's chosen current, not the
+    default linear ramp.
+
+    Primary metric: **integrated current before degradation** ∫I·dt [A·s],
+    the total useful transport current delivered before thermal runaway.
+    This is what HTS magnet designers optimize — maximizing current
+    utilization while staying below the runaway boundary.
+
+    Reward = I_frac per safe step (∝ ∫I·dt), large penalty on runaway.
+    """
+
+    def __init__(self, env, surrogate_result=None, max_steps: int = 200,
+                 dt_step: float | None = None, runaway_penalty: float = -50.0):
+        super().__init__(env)
+        self.max_steps = max_steps
+        self.runaway_penalty = runaway_penalty
+        self._step_count = 0
+        self._integrated_current = 0.0
+
+        # Physical time per env step [s].
+        # FD1d: n_settle_steps * dt.  Analytic: quasi-static, use 1.0 (A·steps).
+        if dt_step is not None:
+            self.dt_step = dt_step
+        elif hasattr(env.unwrapped, "n_settle_steps") and hasattr(env.unwrapped, "dt"):
+            self.dt_step = env.unwrapped.n_settle_steps * env.unwrapped.dt
+        else:
+            self.dt_step = 1.0
+
+        self.action_space = gymnasium.spaces.Box(
+            low=np.float32(0.0), high=np.float32(1.0), shape=(1,), dtype=np.float32)
+        obs_lo = np.zeros(7, dtype=np.float32)
+        obs_hi = np.array([200.0, 2000.0, 10.0, 300.0, 2.0, 2000.0, 1.0], dtype=np.float32)
+        self.observation_space = gymnasium.spaces.Box(obs_lo, obs_hi, dtype=np.float32)
+
+        if surrogate_result is not None:
+            from hts_tape_env.seq_surrogates import SequenceSurrogateAdapter
+            env.set_surrogate(SequenceSurrogateAdapter(surrogate_result))
+
+    def reset(self, **kwargs):
+        self._step_count = 0
+        self._integrated_current = 0.0
+        obs, info = self.env.reset(**kwargs)
+        info["integrated_current_As"] = 0.0
+        return self._augment_obs(obs, info), info
+
+    def step(self, action):
+        a = np.asarray(action, dtype=np.float32).ravel()
+        desired_frac = float(np.clip(a[0], 0.0, self.env.unwrapped.I_max_frac))
+        ramp = self.env.unwrapped.ramp_rate
+        self.env.unwrapped._I_frac = desired_frac - ramp
+
+        obs, _, terminated, truncated, info = self.env.step(0)
+        self._step_count += 1
+
+        margin = info["margin"]
+        I_A = info["I_true_A"]
+        self._integrated_current += I_A * self.dt_step
+        info["integrated_current_As"] = self._integrated_current
+
+        if margin <= 0:
+            reward = self.runaway_penalty
+        else:
+            # Reward ∝ current delivered this step — directly incentivises ∫I·dt
+            reward = float(info["I_frac"])
+
+        if not terminated and self._step_count >= self.max_steps:
+            truncated = True
+
+        return self._augment_obs(obs, info), reward, terminated, truncated, info
+
+    def _augment_obs(self, obs: np.ndarray, info: dict) -> np.ndarray:
+        return np.concatenate([obs, [
+            info.get("margin_pred", 0.0),
+            info.get("I_star_pred", 0.0),
+            info.get("breach_prob_pred", 0.0),
+        ]], dtype=np.float32)
+
+
+class SupervisedCurrentController(nn.Module):
+    """MLP that maps augmented observation → desired I/I* fraction in [0, 1]."""
+
+    def __init__(self, obs_dim: int = 7, hidden: int = 64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(obs_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1),
+            nn.Sigmoid(),
+        )
+        self.name = "supervised_current"
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+    def reset(self) -> None:
+        pass
+
+    @torch.no_grad()
+    def act(self, obs: np.ndarray, info: dict) -> np.ndarray:
+        x = torch.from_numpy(np.asarray(obs, dtype=np.float32)).unsqueeze(0)
+        return self.forward(x).squeeze().cpu().numpy()
+
+
+def train_supervised_controller(
+    df,
+    surrogate_result,
+    *,
+    safety_buffer: float = 0.05,
+    safety_penalty: float = 10.0,
+    epochs: int = 100,
+    batch_size: int = 256,
+    lr: float = 1e-3,
+    hidden: int = 64,
+    seed: int = 42,
+    verbose: bool = True,
+) -> SupervisedCurrentController:
+    """Train a supervised current controller from rollout data.
+
+    Expert target: the ramp's I_frac capped at (1 - safety_buffer), so the
+    controller learns the ramp but never suggests current above I*.
+    """
+    from hts_tape_env.seq_data import TRUE_FEATURES, Normalizer
+    from hts_tape_env.seq_surrogates import SequenceSurrogateAdapter, predict_episode
+
+    torch.manual_seed(seed)
+
+    norm = Normalizer.fit(df, columns=TRUE_FEATURES)
+    obs_rows, target_rows = [], []
+
+    for _, g in df.sort_values("step").groupby("episode_id", sort=False):
+        istar = float(g["Istar_A"].iloc[0])
+        for _, row in g.iterrows():
+            obs_4 = np.array([row["T0_K"], row["I_true_A"],
+                              row["voltage_true_V"], row["T_surface_true_K"]], dtype=np.float32)
+            margin_gt = row["margin_norm"]
+            i_frac = 1.0 - margin_gt
+            target_frac = min(i_frac, 1.0 - safety_buffer)
+            obs_7 = np.concatenate([obs_4, [margin_gt, istar, 0.0]], dtype=np.float32)
+            obs_rows.append(obs_7)
+            target_rows.append(target_frac)
+
+    X = torch.from_numpy(np.array(obs_rows, dtype=np.float32))
+    y = torch.from_numpy(np.array(target_rows, dtype=np.float32)).unsqueeze(1)
+
+    controller = SupervisedCurrentController(obs_dim=7, hidden=hidden)
+    opt = torch.optim.Adam(controller.parameters(), lr=lr)
+
+    n = len(X)
+    for epoch in range(epochs):
+        perm = torch.randperm(n)
+        total_loss = 0.0
+        n_batches = 0
+        for i in range(0, n, batch_size):
+            idx = perm[i:i + batch_size]
+            Xb, yb = X[idx], y[idx]
+            pred = controller(Xb)
+            mse = nn.functional.mse_loss(pred, yb)
+            overshoot = torch.clamp(pred - (1.0 - safety_buffer), min=0.0)
+            penalty = safety_penalty * (overshoot ** 2).mean()
+            loss = mse + penalty
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            total_loss += loss.item()
+            n_batches += 1
+        if verbose and (epoch % 20 == 0 or epoch == epochs - 1):
+            print(f"  epoch {epoch:3d}  loss={total_loss / n_batches:.4f}")
+
+    controller.eval()
+    return controller
+
+
+def run_current_episode(env: CurrentControlEnv, controller, seed: int) -> dict:
+    """Roll out one episode under a current controller."""
+    obs, info = env.reset(seed=seed)
+    controller.reset()
+    utilizations, rewards_list = [], []
+    steps = 0
+    while True:
+        action = controller.act(obs, info)
+        if not isinstance(action, np.ndarray):
+            action = np.array([action], dtype=np.float32)
+        obs, reward, terminated, truncated, info = env.step(action)
+        utilizations.append(info["I_frac"])
+        rewards_list.append(reward)
+        steps += 1
+        if terminated or truncated:
+            return dict(
+                reward=float(np.sum(rewards_list)),
+                mean_utilization=float(np.mean(utilizations)),
+                integrated_current_As=info["integrated_current_As"],
+                steps=steps,
+                runaway=bool(info["runaway"]),
+                final_margin=info["margin"],
+                I_star=info["I_star"],
+            )
+
+
+def evaluate_current_controller(env: CurrentControlEnv, controller,
+                                 n_episodes: int, seed0: int) -> dict:
+    """Evaluate a current controller over multiple episodes.
+
+    Primary metric: mean integrated current before degradation [A·s] — the
+    total useful transport current delivered before thermal runaway.
+    """
+    rewards, utilizations, step_counts = [], [], []
+    integrated_currents, integrated_normed = [], []
+    runaways = 0
+    for k in range(n_episodes):
+        out = run_current_episode(env, controller, seed0 + k)
+        rewards.append(out["reward"])
+        utilizations.append(out["mean_utilization"])
+        step_counts.append(out["steps"])
+        integrated_currents.append(out["integrated_current_As"])
+        # Normalise by I* for cross-operating-point comparison
+        if out["I_star"] > 0:
+            integrated_normed.append(out["integrated_current_As"] / out["I_star"])
+        runaways += int(out["runaway"])
+    return dict(
+        controller=getattr(controller, "name", "unknown"),
+        mean_reward=float(np.mean(rewards)),
+        mean_utilization=float(np.mean(utilizations)),
+        mean_integrated_current_As=float(np.mean(integrated_currents)),
+        mean_integrated_current_normed=float(np.mean(integrated_normed)) if integrated_normed else 0.0,
+        safety_rate=1.0 - runaways / n_episodes,
+        mean_steps=float(np.mean(step_counts)),
+        n_episodes=n_episodes,
     )

@@ -68,8 +68,10 @@ from torch.utils.data import DataLoader, random_split
 from hts_tape_env.seq_data import (
     TRUE_FEATURES,
     EpisodeSequenceDataset,
+    DistillationDataset,
     Normalizer,
     collate_episodes,
+    collate_distillation,
 )
 
 
@@ -496,6 +498,194 @@ def train_seq_surrogate(
         model=model, normalizer=full.normalizer, arch=arch, metrics=metrics,
         meta={"model_kwargs": model_kwargs, "features": full.feature_cols,
               "dump_threshold": dump_threshold},
+    )
+
+
+def train_distilled_surrogate(
+    df,
+    teacher_result: SeqTrainResult,
+    *,
+    arch: str = "gru",
+    alpha: float = 0.5,
+    temperature: float = 2.0,
+    student_feature_cols=TRUE_FEATURES,
+    epochs: int = 40,
+    batch_size: int = 64,
+    lr: float = 1e-3,
+    margin_weight: float = 1.0,
+    breach_weight: float = 1.0,
+    istar_weight: float = 1.0,
+    tstar_weight: float = 0.0,
+    time_margin_weight: float = 0.3,
+    margin_loss_weighting: str = "boundary",
+    boundary_tau: float = 0.05,
+    dump_threshold: float = 0.05,
+    val_frac: float = 0.2,
+    patience: int = 20,
+    min_delta: float = 1e-4,
+    reduce_lr_patience: int = 10,
+    reduce_lr_factor: float = 0.5,
+    min_lr: float = 1e-6,
+    seed: int = 42,
+    device: str | None = None,
+    model_kwargs: dict | None = None,
+    teacher_path: str = "",
+    verbose: bool = True,
+) -> SeqTrainResult:
+    """Train a student surrogate distilled from a teacher that sees extra features.
+
+    Loss = alpha * hard_loss + (1 - alpha) * soft_loss, where:
+      - hard_loss: standard physics targets (same as train_seq_surrogate)
+      - soft_loss: MSE on regressions + temperature-scaled binary KL on breach_logit
+    """
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(seed)
+
+    full = DistillationDataset(
+        df, teacher_result, student_feature_cols=student_feature_cols,
+        dump_threshold=dump_threshold)
+    n_val = max(1, int(val_frac * len(full)))
+    n_train = len(full) - n_val
+    train_ds, val_ds = random_split(
+        full, [n_train, n_val], generator=torch.Generator().manual_seed(seed))
+
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                          collate_fn=collate_distillation)
+    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        collate_fn=collate_distillation)
+
+    model_kwargs = model_kwargs or {}
+    model = build_model(arch, **model_kwargs).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, patience=reduce_lr_patience, factor=reduce_lr_factor, min_lr=min_lr)
+    bce = nn.BCEWithLogitsLoss(reduction="none")
+
+    def compute_loss(batch: dict) -> torch.Tensor:
+        X, mask = batch["X"].to(device), batch["mask"].to(device)
+        margin, breach = batch["margin"].to(device), batch["breach"].to(device)
+        istar, tstar = batch["istar_log"].to(device), batch["tstar"].to(device)
+        tm_log, tm_valid = batch["time_margin_log"].to(device), batch["time_margin_valid"].to(device)
+        lengths = batch["lengths"]
+
+        out = model(X, lengths)
+        mask_f = mask.float()
+
+        if margin_loss_weighting == "boundary":
+            step_weight = mask_f * torch.exp(-margin.abs() / boundary_tau)
+        else:
+            step_weight = mask_f
+
+        l_margin = _masked_mse(out["margin"], margin, step_weight)
+        l_breach = (bce(out["breach_logit"], breach) * mask_f).sum() / mask_f.sum().clamp(min=1e-8)
+        l_istar = nn.functional.mse_loss(out["istar_log"], istar)
+        l_tstar = nn.functional.mse_loss(out["tstar"], tstar)
+        l_tm = ((out["time_margin_log"] - tm_log) ** 2 * tm_valid).sum() / tm_valid.sum().clamp(min=1e-8)
+
+        hard = (margin_weight * l_margin + breach_weight * l_breach
+                + istar_weight * l_istar + tstar_weight * l_tstar
+                + time_margin_weight * l_tm)
+
+        # Soft (distillation) losses
+        ms = batch["margin_soft"].to(device)
+        bls = batch["breach_logit_soft"].to(device)
+        ils = batch["istar_log_soft"].to(device)
+        ts = batch["tstar_soft"].to(device)
+        tls = batch["tm_log_soft"].to(device)
+
+        soft_margin = _masked_mse(out["margin"], ms, mask_f)
+        soft_istar = nn.functional.mse_loss(out["istar_log"], ils)
+        soft_tstar = nn.functional.mse_loss(out["tstar"], ts)
+        soft_tm = ((out["time_margin_log"] - tls) ** 2 * tm_valid).sum() / tm_valid.sum().clamp(min=1e-8)
+
+        # Temperature-scaled binary KL for breach_logit (Hinton et al. 2015)
+        s_prob = torch.sigmoid(out["breach_logit"] / temperature)
+        t_prob = torch.sigmoid(bls / temperature)
+        eps = 1e-7
+        kl = t_prob * torch.log((t_prob + eps) / (s_prob + eps)) + \
+             (1 - t_prob) * torch.log((1 - t_prob + eps) / (1 - s_prob + eps))
+        soft_breach = (kl * mask_f).sum() / mask_f.sum().clamp(min=1e-8) * (temperature ** 2)
+
+        soft = (margin_weight * soft_margin + breach_weight * soft_breach
+                + istar_weight * soft_istar + tstar_weight * soft_tstar
+                + time_margin_weight * soft_tm)
+
+        return alpha * hard + (1 - alpha) * soft
+
+    def run_epoch(dl, train: bool) -> float:
+        model.train(train)
+        total, n_batches = 0.0, 0
+        for batch in dl:
+            with torch.set_grad_enabled(train):
+                loss = compute_loss(batch)
+            if train:
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+            total += loss.item()
+            n_batches += 1
+        return total / max(n_batches, 1)
+
+    best_val, best_state = float("inf"), None
+    epochs_no_improve = 0
+    for epoch in range(epochs):
+        train_loss = run_epoch(train_dl, train=True)
+        val_loss = run_epoch(val_dl, train=False)
+        scheduler.step(val_loss)
+        if val_loss < best_val - min_delta:
+            best_val = val_loss
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+        if verbose and (epoch % 5 == 0 or epoch == epochs - 1):
+            print(f"  epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}")
+        if patience > 0 and epochs_no_improve >= patience:
+            if verbose:
+                print(f"  Early stopped at epoch {epoch}/{epochs}")
+            break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model.eval()
+
+    # Held-out metrics (same as train_seq_surrogate)
+    istar_true_all, istar_pred_all = [], []
+    tstar_true_all, tstar_pred_all = [], []
+    with torch.no_grad():
+        for batch in val_dl:
+            X, lengths = batch["X"].to(device), batch["lengths"]
+            out = model(X, lengths)
+            istar_true_all.append(batch["istar_log"].numpy())
+            istar_pred_all.append(out["istar_log"].cpu().numpy())
+            tstar_true_all.append(batch["tstar"].numpy())
+            tstar_pred_all.append(out["tstar"].cpu().numpy())
+
+    istar_true = np.exp(np.concatenate(istar_true_all))
+    istar_pred = np.exp(np.concatenate(istar_pred_all))
+    istar_mae = float(np.mean(np.abs(istar_true - istar_pred)))
+    istar_rel = float(np.median(np.abs(istar_true - istar_pred) / istar_true))
+    tstar_mae = float(np.mean(np.abs(np.concatenate(tstar_true_all) - np.concatenate(tstar_pred_all))))
+
+    metrics = {
+        "best_val_loss": best_val,
+        "istar_mae_A": istar_mae,
+        "istar_median_rel_err": istar_rel,
+        "tstar_mae_K": tstar_mae,
+    }
+    if verbose:
+        print(f"Distilled student I*: MAE={istar_mae:.2f} A, median rel err={istar_rel:.2%}")
+        print(f"Distilled student T*: MAE={tstar_mae:.2f} K")
+
+    student_norm = full.student_ds.normalizer
+    return SeqTrainResult(
+        model=model, normalizer=student_norm, arch=arch, metrics=metrics,
+        meta={"model_kwargs": model_kwargs,
+              "features": list(student_feature_cols),
+              "dump_threshold": dump_threshold,
+              "teacher_path": teacher_path,
+              "distill_alpha": alpha,
+              "distill_temperature": temperature},
     )
 
 
