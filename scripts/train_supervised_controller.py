@@ -16,8 +16,6 @@ from pathlib import Path
 
 import torch
 
-from hts_tape_env.env import QuenchDetectorEnv
-from hts_tape_env.rollout import generate_rollout_dataset
 from hts_tape_env.seq_surrogates import load_seq_surrogate
 from hts_tape_env.controllers import (
     CurrentControlEnv,
@@ -26,16 +24,39 @@ from hts_tape_env.controllers import (
 )
 
 CONDUCTOR_ENV_KWARGS = {
-    "rebco_nostab": {"mode": "no_stab"},
-    "rebco_stab": {"mode": "stab"},
+    "rebco_nostab": {"env_cls": "QuenchDetectorEnv", "kwargs": {"mode": "no_stab"}},
+    "rebco_stab": {"env_cls": "QuenchDetectorEnv", "kwargs": {"mode": "stab"}},
+    "bi2223_nostab": {"env_cls": "Bi2223QuenchDetectorEnv", "kwargs": {"mode": "no_stab"}},
+    "bi2223_agstab": {"env_cls": "Bi2223QuenchDetectorEnv", "kwargs": {"mode": "ag_stab", "T0_range": (77.16, 79.0)}},
 }
+
+
+def _make_env(conductor: str):
+    cfg = CONDUCTOR_ENV_KWARGS[conductor]
+    if cfg["env_cls"] == "Bi2223QuenchDetectorEnv":
+        from hts_tape_env.env_bi2223 import Bi2223QuenchDetectorEnv
+        return Bi2223QuenchDetectorEnv(**cfg["kwargs"])
+    else:
+        from hts_tape_env.env import QuenchDetectorEnv
+        return QuenchDetectorEnv(**cfg["kwargs"])
+
+
+def _generate_rollouts(conductor: str, n_episodes: int, seed: int):
+    cfg = CONDUCTOR_ENV_KWARGS[conductor]
+    if cfg["env_cls"] == "Bi2223QuenchDetectorEnv":
+        from hts_tape_env.rollout_bi2223_env import generate_rollout_dataset
+        return generate_rollout_dataset(n_episodes, env_kwargs=cfg["kwargs"], seed=seed)
+    else:
+        from hts_tape_env.rollout import generate_rollout_dataset
+        return generate_rollout_dataset(n_episodes, env_kwargs=cfg["kwargs"], seed=seed)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Train supervised current controller")
     ap.add_argument("--surrogate-checkpoint", required=True,
                     help="Path to trained GRU surrogate .pt checkpoint")
-    ap.add_argument("--conductor", default="rebco_nostab", choices=list(CONDUCTOR_ENV_KWARGS))
+    ap.add_argument("--conductor", default="rebco_nostab",
+                    choices=list(CONDUCTOR_ENV_KWARGS))
     ap.add_argument("--n-episodes", type=int, default=2000,
                     help="Rollout episodes for training data")
     ap.add_argument("--epochs", type=int, default=100)
@@ -48,7 +69,6 @@ def main():
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    env_kwargs = CONDUCTOR_ENV_KWARGS[args.conductor]
 
     # ── 1. Load surrogate ──
     print(f"\n=== 1. Loading surrogate from {args.surrogate_checkpoint} ===")
@@ -57,7 +77,7 @@ def main():
 
     # ── 2. Generate rollout data ──
     print(f"\n=== 2. Generating {args.n_episodes} rollout episodes ===")
-    df = generate_rollout_dataset(args.n_episodes, env_kwargs=env_kwargs, seed=args.seed)
+    df = _generate_rollouts(args.conductor, args.n_episodes, seed=args.seed)
     print(f"  {len(df)} steps, {df.groupby('episode_id').ngroups} episodes")
 
     # ── 3. Train supervised controller ──
@@ -76,7 +96,7 @@ def main():
 
     # ── 4. Evaluate ──
     print(f"\n=== 4. Evaluating over {args.eval_episodes} episodes ===")
-    inner = QuenchDetectorEnv(**env_kwargs)
+    inner = _make_env(args.conductor)
     env = CurrentControlEnv(inner, surrogate_result=surrogate)
     result = evaluate_current_controller(env, controller, args.eval_episodes, seed0=args.seed)
     print(f"  Integrated I·dt:  {result['mean_integrated_current_As']:.1f} A·s")

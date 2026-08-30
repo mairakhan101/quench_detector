@@ -146,6 +146,12 @@
 - **Result/metric:** `gymnasium.utils.env_checker` passes. Single-episode smoke test: always-continue agent hits runaway at step 140 (reward −48.6); oracle dump-at-margin-0.08 agent terminates correctly. Physics validated against notebook: `solve_runaway` at T0=59 K, λ=99 W/m/K gives I*=435 A matching analytic surface.
 - **Next:** (1) Train a simple threshold baseline and a GRU agent; compare sensitivity/FPR/lead-time. (2) Wire the trained GBRT surrogate (`surr_2D`) into `env.set_surrogate()` to replace per-step brentq and speed up rollouts. (3) Extend to multi-conductor (vary Ic0, Tc) and add time-dependent ramp (non-constant dI/dt).
 
+## 2026-08-30
+- **What:** Extended controller training scripts (train_supervised_controller.py, train_rl_controller.py) to support all 4 lumped-model conductors (added bi2223_nostab, bi2223_agstab). Created igx_train_all.sh orchestration script for 3-stage GPU training: (1) sinusoidal embedding retrain for Transformer+SSM, 400 epochs; (2) full cross-family transfer learning (12 directional pairs + 4 baselines, GRU/Transformer/SSM); (3) supervised + PPO controllers for all 4 conductors.
+- **Why:** Polaris retrain_sinusoidal and controller jobs never completed. Need IGX GPU training to fill gaps for paper: cross-family transfer (Bi-2223↔REBCO), improved Transformer/SSM, and controller ∫I·dt metrics.
+- **Result/metric:** Scripts ready. Controller scripts now use factory pattern (_make_env, _generate_rollouts) to handle both REBCO and Bi-2223 envs. IGX script supports selective stages (bash igx_train_all.sh [retrain|transfer|controllers|all]).
+- **Next:** Run igx_train_all.sh on IGX. After results: generate paper figures for sinusoidal-retrained models, 4×4 cross-family transfer matrix, controller ∫I·dt comparison. Then FD1d seq model production training.
+
 ## YYYY-MM-DD
 - **What:**
 - **Why:**

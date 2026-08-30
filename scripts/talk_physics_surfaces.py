@@ -61,8 +61,6 @@ def _predict_bi2223_surface(result, T0_grid, env_kwargs):
                  "time_margin_analytic_ms", "time_margin_pred_ms")}
     feature_cols = result.meta.get("features", TRUE_FEATURES)
 
-    feature_cols = result.meta.get("features", TRUE_FEATURES)
-
     for i, T0 in enumerate(T0_grid):
         obs, info = env.reset_at(float(T0), seed=i)
         if not np.isfinite(info.get("I_star", np.nan)) or info["I_star"] <= 0:
@@ -259,12 +257,6 @@ def plot_bi2223_curves(conductor_name, T0_grid, arch_surfaces, out_dir,
     colors = {"gru": "#2a78d6", "transformer": "#eb6834", "ssm": "#1baf7a"}
     archs = list(arch_surfaces.keys())
     yt = arch_surfaces[archs[0]]["Istar_analytic"][0]  # squeeze lam dim
-    print(f"  [DEBUG plot] archs={archs}")
-    print(f"  [DEBUG plot] T0_grid shape={T0_grid.shape}, range=[{T0_grid[0]:.2f}, {T0_grid[-1]:.2f}]")
-    print(f"  [DEBUG plot] yt shape={yt.shape}, values={yt}")
-    for arch in archs:
-        yp = arch_surfaces[arch]["Istar_pred"][0]
-        print(f"  [DEBUG plot] {arch} Istar_pred={yp}")
 
     # Panel 1: I*(T₀) curves
     ax = axes[0, 0]
@@ -386,7 +378,8 @@ def main():
         if cp.exists():
             try:
                 a, s = load_and_predict(str(cp), T0_bi_ag, lam_dummy,
-                                        env_kwargs={"mode": "ag_stab"})
+                                        env_kwargs={"mode": "ag_stab"},
+                                        conductor_type="bi2223")
                 bi_ag[arch] = s
             except RuntimeError as e:
                 print(f"  Skipping {arch}: {e}")
@@ -404,7 +397,8 @@ def main():
         if cp.exists():
             try:
                 a, s = load_and_predict(str(cp), T0_bi_ns, lam_dummy,
-                                        env_kwargs={"mode": "no_stab"})
+                                        env_kwargs={"mode": "no_stab"},
+                                        conductor_type="bi2223")
                 bi_ns[arch] = s
             except RuntimeError as e:
                 print(f"  Skipping {arch}: {e}")
