@@ -1,0 +1,23 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q prod
+#PBS -l select=10:system=polaris
+#PBS -l walltime=03:00:00
+#PBS -l filesystems=home:eagle
+#PBS -l place=scatter
+#PBS -N transfer_learn
+#PBS -j oe
+
+# Cross-conductor transfer learning: 10 nodes, each running one
+# (source, target) pair across all architectures.
+#
+# Submit:  qsub scripts/polaris/run_transfer_learning.pbs
+#
+# Results: /eagle/fanc_ldrd/magnets_fem/transfer_learning/
+
+set -euo pipefail
+
+export TRANSFER_OUT=/eagle/fanc_ldrd/magnets_fem/transfer_learning
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+pbsdsh "$REPO/scripts/polaris/transfer_worker.sh"

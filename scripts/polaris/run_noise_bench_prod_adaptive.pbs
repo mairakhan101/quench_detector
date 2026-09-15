@@ -1,0 +1,26 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q prod
+#PBS -l select=30:system=polaris
+#PBS -l walltime=03:00:00
+#PBS -l filesystems=home:eagle
+#PBS -l place=scatter
+#PBS -N noise_bench_adaptive
+#PBS -j oe
+
+# Production noise+diffusion benchmark: adaptive (boundary-aware) sampling.
+# 30 nodes = 5 conductors × 6 noise levels.
+# Each node trains 4 architectures (gru, transformer, ssm, diffusion) at
+# one conductor/noise combo with curvature-weighted T0 sampling.
+#
+# Submit:  qsub scripts/polaris/run_noise_bench_prod_adaptive.pbs
+#
+# Results: /eagle/fanc_ldrd/magnets_fem/noise_bench_adaptive/
+
+set -euo pipefail
+
+export NOISE_BENCH_OUT=/eagle/fanc_ldrd/magnets_fem/noise_bench_adaptive
+export NOISE_BENCH_MODE=adaptive
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+pbsdsh "$REPO/scripts/polaris/noise_bench_worker.sh"

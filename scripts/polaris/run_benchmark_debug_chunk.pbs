@@ -1,0 +1,67 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -N bench_dbg
+#PBS -j oe
+
+# Debug-queue chunk: run ONE (conductor, sampling_mode) combo with
+# production-level parameters on a single node.
+#
+# TASK_ID selects which combo (0-9, same mapping as benchmark_worker.sh):
+#   0-4 = uniform  (nostab, agstab, rebco_nostab, rebco_stab, rebco_fd1d)
+#   5-9 = adaptive (same order)
+#
+# Submit one:   qsub -v TASK_ID=0 scripts/polaris/run_benchmark_debug_chunk.pbs
+# Submit all:   for i in $(seq 0 9); do qsub -v TASK_ID=$i ...; done
+# Or use:       bash scripts/polaris/submit_debug_prod.sh --benchmark
+
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+SEED=42
+OUT_UNI=/eagle/fanc_ldrd/magnets_fem/benchmark_prod_uniform
+OUT_ADA=/eagle/fanc_ldrd/magnets_fem/benchmark_prod_adaptive
+
+cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+
+CONDUCTORS=("Bi-2223 no-stab" "Bi-2223 Ag-stab" "REBCO no-redist" "REBCO Cu/SS redist" "REBCO 1D-FD")
+
+TASK_ID=${TASK_ID:-0}
+COND_IDX=$((TASK_ID % 5))
+CONDUCTOR="${CONDUCTORS[$COND_IDX]}"
+
+if [ "$TASK_ID" -lt 5 ]; then
+    MODE="uniform"
+    OUTDIR="$OUT_UNI"
+else
+    MODE="adaptive"
+    OUTDIR="$OUT_ADA"
+fi
+
+echo "=== Debug chunk $TASK_ID: $CONDUCTOR ($MODE) on $(hostname) ==="
+echo "Date: $(date)"
+mkdir -p "$OUTDIR"
+
+EXTRA=""
+if [ "$MODE" = "adaptive" ]; then
+    EXTRA="--adaptive --blend 0.5"
+fi
+
+$PYTHON scripts/benchmark_all_envs.py \
+    --scale production \
+    --only "$CONDUCTOR" \
+    --out-dir "$OUTDIR" \
+    --seed $SEED \
+    $EXTRA
+
+echo "=== Debug chunk $TASK_ID done: $(date) ==="

@@ -1,0 +1,69 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q debug
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:eagle
+#PBS -N xfer_dbg
+#PBS -j oe
+
+# Debug-queue chunk: run ONE cross-conductor transfer pair with moderate
+# parameters that fit in the 1-hr debug window.
+#
+# TASK_ID selects which pair (0-9, same as transfer_worker.sh):
+#   0: rebco_nostab  -> bi2223_nostab
+#   1: bi2223_nostab -> rebco_nostab
+#   2: rebco_nostab  -> rebco_stab
+#   3: rebco_stab    -> rebco_nostab
+#   4: bi2223_nostab -> rebco_stab
+#   5: rebco_stab    -> bi2223_nostab
+#   6: rebco_nostab  -> rebco_nostab   (baseline)
+#   7: rebco_stab    -> rebco_stab     (baseline)
+#   8: bi2223_nostab -> bi2223_nostab   (baseline)
+#   9: bi2223_agstab -> bi2223_agstab   (baseline)
+#
+# Submit:  qsub -v TASK_ID=0 scripts/polaris/run_transfer_debug_chunk.pbs
+
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+SEED=42
+OUT="${TRANSFER_OUT:-/eagle/fanc_ldrd/magnets_fem/transfer_learning}"
+
+cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+
+PAIRS=(
+    "rebco_nostab:bi2223_nostab"
+    "bi2223_nostab:rebco_nostab"
+    "rebco_nostab:rebco_stab"
+    "rebco_stab:rebco_nostab"
+    "bi2223_nostab:rebco_stab"
+    "rebco_stab:bi2223_nostab"
+    "rebco_nostab:rebco_nostab"
+    "rebco_stab:rebco_stab"
+    "bi2223_nostab:bi2223_nostab"
+    "bi2223_agstab:bi2223_agstab"
+)
+
+TASK_ID=${TASK_ID:-0}
+PAIR=${PAIRS[$TASK_ID]}
+
+echo "=== Debug transfer chunk $TASK_ID: $PAIR on $(hostname) ==="
+echo "Date: $(date)"
+mkdir -p "$OUT"
+
+$PYTHON scripts/transfer_learning.py \
+    --scale production \
+    --pairs "$PAIR" \
+    --archs gru transformer ssm diffusion \
+    --seed $SEED \
+    --out-dir "$OUT"
+
+echo "=== Debug transfer chunk $TASK_ID done ($PAIR): $(date) ==="

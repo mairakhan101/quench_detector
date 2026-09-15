@@ -1,0 +1,23 @@
+
+# --- research workflow defaults ---
+data/
+*.h5
+*.root
+*.ckpt
+*.pt
+*.onnx
+*.joblib
+checkpoints/
+wandb/
+runs/
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
+core.*
+
+# Benchmark outputs (keep tracked .py files in models/, ignore generated artifacts)
+models/*.png
+models/*.csv
+models/*.json

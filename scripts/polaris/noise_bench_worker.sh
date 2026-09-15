@@ -1,0 +1,70 @@
+#!/bin/bash
+# Worker script invoked by pbsdsh — one instance per node.
+# Reads PBS_NODENUM to determine which (conductor, noise) combo to run.
+#
+# Args passed via environment:
+#   NOISE_BENCH_OUT    — output directory
+#   NOISE_BENCH_MODE   — "uniform" or "adaptive"
+
+set -euo pipefail
+
+export OPENBLAS_NUM_THREADS=8
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export JAX_PLATFORMS=cpu
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+PYTHON=$HOME/.conda/envs/quench_surr/bin/python
+SEED=42
+OUT="${NOISE_BENCH_OUT:-/eagle/fanc_ldrd/magnets_fem/noise_bench_uniform}"
+MODE="${NOISE_BENCH_MODE:-uniform}"
+
+cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+
+CONDUCTORS=(bi2223_nostab bi2223_agstab rebco_nostab rebco_stab rebco_fd1d)
+NOISE_LEVELS=(noiseless gauss_0.5x gauss_1x gauss_2x gauss_5x realistic)
+
+SCRIPTS=(
+    train_eval_bi2223_nostab.py
+    train_eval_bi2223_agstab.py
+    train_eval_rebco_nostab.py
+    train_eval_rebco_stab.py
+    train_eval_rebco_fd1d.py
+)
+
+ARGS_bi2223_nostab="--n-samples 2000 --n-eval-points 30 --seq-epochs 200"
+ARGS_bi2223_agstab="--n-samples 2000 --seq-episodes 500 --seq-epochs 200"
+ARGS_rebco_nostab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
+ARGS_rebco_stab="--n-samples 2000 --n-episodes 500 --seq-epochs 200"
+ARGS_rebco_fd1d="--n-samples 500 --n-episodes 100 --seq-epochs 100 --nx 100 --backend jax"
+
+RANK=${PBS_NODENUM:-0}
+COND_IDX=$((RANK / 6))
+NOISE_IDX=$((RANK % 6))
+
+CONDUCTOR=${CONDUCTORS[$COND_IDX]}
+NOISE=${NOISE_LEVELS[$NOISE_IDX]}
+SCRIPT=${SCRIPTS[$COND_IDX]}
+
+ARGS_VAR="ARGS_${CONDUCTOR}"
+ARGS="${!ARGS_VAR}"
+
+echo "=== Node $RANK: $CONDUCTOR / $NOISE ($MODE) on $(hostname) ==="
+echo "Date: $(date)"
+mkdir -p "$OUT"
+
+EXTRA_ARGS=""
+if [ "$MODE" = "adaptive" ]; then
+    EXTRA_ARGS="--adaptive --blend 0.5"
+fi
+
+$PYTHON "scripts/$SCRIPT" \
+    $ARGS \
+    --archs gru transformer ssm diffusion \
+    --noise "$NOISE" \
+    --seed $SEED \
+    --out-dir "$OUT" \
+    $EXTRA_ARGS
+
+echo "=== Node $RANK done ($CONDUCTOR / $NOISE): $(date) ==="

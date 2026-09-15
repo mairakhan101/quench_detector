@@ -1,0 +1,24 @@
+#!/bin/bash
+#PBS -A fanc_ldrd
+#PBS -q prod
+#PBS -l select=10:system=polaris
+#PBS -l walltime=03:00:00
+#PBS -l filesystems=home:eagle
+#PBS -l place=scatter
+#PBS -N bench_prod_all
+#PBS -j oe
+
+# Production benchmark: 10 nodes, each running one task.
+# 5 conductors x 2 sampling modes (uniform + adaptive) = 10 tasks.
+# Uses pbsdsh to dispatch one task per node.
+#
+# Submit:  qsub scripts/polaris/run_benchmark_prod.pbs
+#
+# Results land in:
+#   /eagle/fanc_ldrd/magnets_fem/benchmark_prod_uniform/
+#   /eagle/fanc_ldrd/magnets_fem/benchmark_prod_adaptive/
+
+set -euo pipefail
+
+REPO=$HOME/fanc/magnets_rl/quench_detector
+pbsdsh "$REPO/scripts/polaris/benchmark_worker.sh"

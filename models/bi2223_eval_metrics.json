@@ -1,0 +1,49 @@
+{
+  "input_A": {
+    "mae": 0.0742844769726886,
+    "r2": 0.9999648283298788,
+    "median_rel_err": 0.0002430620975366605
+  },
+  "input_B": {
+    "mae": 0.003372163414866587,
+    "r2": 0.999358290298255,
+    "median_rel_err": 0.018740677242486768
+  },
+  "input_raw": {
+    "mae": 0.07773416748731234,
+    "r2": 0.9999629670723288,
+    "median_rel_err": 0.0002575759451861711
+  },
+  "seq_gru": {
+    "best_val_loss": 0.0013181762624299154,
+    "istar_mae_A": 0.9172391891479492,
+    "istar_median_rel_err": 0.0035204323939979076,
+    "tstar_mae_K": 0.030583487823605537,
+    "time_margin_median_rel_err": 0.006351875141263008,
+    "breach_accuracy": 1.0,
+    "margin_near_boundary_mae": 0.0035974078346043825
+  },
+  "seq_transformer": {
+    "best_val_loss": 0.006251849205000326,
+    "istar_mae_A": 5.041838645935059,
+    "istar_median_rel_err": 0.021170875057578087,
+    "tstar_mae_K": 0.13093066215515137,
+    "time_margin_median_rel_err": 0.003983760252594948,
+    "breach_accuracy": 1.0,
+    "margin_near_boundary_mae": 0.004279508721083403
+  },
+  "eval": {
+    "input_A": {
+      "istar_median_rel_err": 0.000247558785802488,
+      "istar_95th_rel_err": 0.002020243073578706
+    },
+    "seq_gru": {
+      "istar_median_rel_err": 0.003526752195425209,
+      "istar_95th_rel_err": 0.008869296286704612
+    },
+    "seq_transformer": {
+      "istar_median_rel_err": 0.020656556457718123,
+      "istar_95th_rel_err": 0.02787150552928035
+    }
+  }
+}
