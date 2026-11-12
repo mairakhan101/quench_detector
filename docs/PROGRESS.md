@@ -1,6 +1,31 @@
 # Progress log
 
 <!-- newest entry on top -->
+## 2026-11-12 (3) — Horizon sweep, false-alarm audit, false-alarm metric fix
+- **What:** GRU retrained at H = 1 s and 2 s (GPU). Audited every `false_alarm=True` row across all six test CSVs. Fixed `evaluate_runaway_model`: `false_alarm_rate` now divides by censored runs with at least one known-safe step (`n_censored_evaluable`, new); censored windows shorter than H previously counted as "no false alarm" by construction. +1 test.
+- **Why:** Measure the lead time the telemetry supports; check whether false alarms are model errors or label artifacts.
+- **Result/metric:** Warning time tracks H with 100% detection: median/p10 0.48/0.47 s (H=0.5), 1.02/1.00 s (H=1), 2.04/2.02 s (H=2); AUROC ≥ 0.9996; ttr MAE in last 1 s 15 / 18 / 52 ms. Every false alarm in every model is a censored run at 1.260–1.264 Ic — just below the 1.265 boundary and still accelerating when the 1.5 s hold ended — so they're most likely correct calls against truncated labels; no alarms on clearly stable runs. Reported false alarm counts: GRU 1, H=1 3, H=2 5, no-current 5, S4D 5, Transformer 5 (of 105). The metric fix only changes H=2 (runs < ~1.03 Ic have 1.5 s windows, no valid step at H=2): its rate is 5 of ~45 evaluable, not 5/105. Caveat: at 1–2 s before onset V ≲ 0.3 mV and ΔT ≲ 0.5 K — resolvable in noiseless FEA, possibly not by a real DAQ — and the no-current check was only done at H=0.5, so the 2 s lead time may partly come from fixed-ramp timing.
+- **Next:** (1) No-current GRU at H=2 to separate V/T precursors from ramp timing at long horizons. (2) Add instrument noise to V/T once DAQ specs are known and re-measure lead time. (3) Longer hold window in future sweeps to resolve the 1.20–1.264 Ic censored runs.
+
+## 2026-11-12 (2) — Time-to-runaway / runaway-probability models trained on the FEA sweep
+- **What:** Added `hts_tape_env/runaway_seq.py` (dataset, censored loss, train/evaluate/save/load), `scripts/train_fem_runaway.py`, `tests/test_runaway_seq.py` (8 tests). Reuses the GRU/Transformer/S4D backbones' per-step heads as log time-to-runaway (MSE on runaway runs, squared hinge against the observed-window lower bound on censored runs) and P(runaway within H = 0.5 s) (labels masked in the last H of censored windows). Inputs I_A, asinh(V / 1 µV), T_surface_K. Splits: contiguous 0.02 Ic blocks round-robin → 481 train / 160 val / 160 test runs. Trained on GPU (200 max epochs, patience 20).
+- **Why:** Shifted targets from I*/margin (constant across this fixed-T0/cooling sweep) to quantities the sweep actually supports; see previous entry.
+- **Result/metric (test set, 55 runaway / 105 censored runs):**
+
+  | | GRU | Transformer | S4D | GRU, no current |
+  |---|---|---|---|---|
+  | detection rate | 1.00 | 1.00 | 1.00 | 1.00 |
+  | false alarm rate | 0.010 (1/105) | 0.048 | 0.048 | 0.048 |
+  | ttr MAE, last 1 s | 15 ms | 25 ms | 48 ms | 44 ms |
+  | ttr median rel. err | 2.1% | 1.7% | 2.6% | 3.0% |
+  | prob AUROC / Brier | 1.000 / 0.0014 | 0.9999 / 0.0019 | 0.9994 / 0.0055 | 0.9996 / 0.0045 |
+  | median warning | 0.48 s | 0.49 s | 0.53 s | 0.51 s |
+  | early-alarm rate (> H) | 0.27 | 0.35 | 0.98 | 0.62 |
+  | censored bound violation | 0.090 | 0.095 | 0.077 | 0.108 |
+
+  GRU is best overall. Dropping current keeps 100% detection and ~3% median error → V/T carry most of the predictive signal, not just ramp timing; current improves near-onset precision ~3× and cuts false alarms 5→1 (can't separate physics from fixed-ramp timing on this sweep). Warning times cluster at H by construction, so they reflect the chosen horizon, not intrinsic detectability. S4D's probabilities are biased early. CPU note: S4D's Python time loop is ~4.5 min/epoch on a laptop CPU; train on GPU.
+- **Next:** (1) Horizon sweep (H = 1, 2 s) to measure how much lead time the telemetry supports. (2) Check whether false alarms / bound violations sit in the 1.20–1.26 Ic censored runs that were still heating at window end. (3) Re-run the with/without-current comparison on the varying-I* sweeps (ideally with varied ramp rates). (4) Add instrument noise once DAQ specs are known.
+
 ## 2026-11-12 — FEA no-heater sweep loader for time-to-runaway / runaway-probability targets
 - **What:** Added `hts_tape_env/fem_runaway_data.py` (`load_runaway_sweep`, `runaway_onset_time`) + `tests/test_fem_runaway_data.py`. Loads the local FreeFEM no-heater sweep (`~/Downloads/local-FreeFEM/3D-slit/electrothermal/runs/noheater_sweep/sweep.h5`: 801 runs, I/Ic = 0.700–1.500 in 0.001 steps, Ic ≈ 311 A, 20 A/s ramp from Ic then ~1.5 s hold) into a long table on a uniform 10 ms grid. Inputs: I_A, whole-tape voltage_V, T_surface_K (hottest of 16 RTDs). Labels: runaway onset = first Tmax ≥ Tc = 90 K (interpolated); per-step time_to_runaway_s; runs that never reach 90 K are right-censored (NaN + observed window t_end_s), not "stable".
 - **Why:** Training directly on FEA (no analytic pretraining). T0 and cooling are fixed across this sweep, so I* is one constant — I*/margin targets would be learnable from I alone. Retargeted to time-to-runaway + runaway probability; varying-I* sweeps are being produced separately. Resampling removes the solver's adaptive timestep (shrinks as runaway approaches → would leak the label). Tmax is used only for labels since the RTDs lag it by up to 13 K during runaway.

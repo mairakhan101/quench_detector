@@ -97,6 +97,20 @@ def test_ratio_block_split_is_disjoint_and_contiguous(df):
     assert all(np.min(np.abs(train_ratios - r)) >= 0.005 - 1e-9 for r in test_ratios)
 
 
+def test_false_alarm_rate_ignores_censored_runs_shorter_than_horizon(df):
+    splits = split_by_ratio_blocks(df, block_width=0.02)
+    result = train_runaway_model(splits["train"], splits["val"], arch="gru", horizon_s=H,
+                                 epochs=1, patience=0, verbose=False, model_kwargs={"hidden": 8})
+    m = evaluate_runaway_model(result, splits["test"])["metrics"]
+    assert m["n_censored_evaluable"] == m["n_censored_episodes"]
+
+    # Synthetic censored windows are 1.0 s, so a 1.5 s horizon leaves no known-safe step.
+    result.meta["horizon_s"] = 1.5
+    m = evaluate_runaway_model(result, splits["test"])["metrics"]
+    assert m["n_censored_evaluable"] == 0
+    assert np.isnan(m["false_alarm_rate"])
+
+
 @pytest.mark.parametrize("arch", ARCHS)
 def test_train_evaluate_save_load(df, tmp_path, arch):
     splits = split_by_ratio_blocks(df, block_width=0.02)

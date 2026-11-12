@@ -310,7 +310,8 @@ def evaluate_runaway_model(result: RunawayTrainResult, df: pd.DataFrame,
             false_alarm = bool(np.any((e["prob"] >= alarm_threshold) & valid))
             rows.append(dict(episode_id=e["episode_id"], ratio=e["ratio"], runaway=0,
                              alarm_t_s=None if first is None else float(e["t_s"][first]),
-                             warning_s=np.nan, false_alarm=false_alarm))
+                             warning_s=np.nan, false_alarm=false_alarm,
+                             evaluable=bool(valid.any())))
         else:
             near = e["ttr_s"] <= near_s
             near_err.append(np.abs(e["ttr_pred_s"][near] - e["ttr_s"][near]))
@@ -318,12 +319,14 @@ def evaluate_runaway_model(result: RunawayTrainResult, df: pd.DataFrame,
             rows.append(dict(episode_id=e["episode_id"], ratio=e["ratio"], runaway=1,
                              alarm_t_s=None if first is None else float(e["t_s"][first]),
                              warning_s=np.nan if first is None else float(e["ttr_s"][first]),
-                             false_alarm=False))
+                             false_alarm=False, evaluable=True))
 
     y, p = np.concatenate(y), np.concatenate(p)
     per_episode = pd.DataFrame(rows)
     run = per_episode[per_episode["runaway"] == 1]
     cens = per_episode[per_episode["runaway"] == 0]
+    # A censored run shorter than horizon_s has no known-safe step to false-alarm on.
+    cens_eval = cens[cens["evaluable"]]
     warnings = run["warning_s"].dropna()
 
     def _cat(chunks):
@@ -333,6 +336,7 @@ def evaluate_runaway_model(result: RunawayTrainResult, df: pd.DataFrame,
     metrics = {
         "n_runaway_episodes": int(len(run)),
         "n_censored_episodes": int(len(cens)),
+        "n_censored_evaluable": int(len(cens_eval)),
         "prob_auroc": float(roc_auc_score(y, p)) if 0 < y.sum() < len(y) else float("nan"),
         "prob_brier": float(np.mean((p - y) ** 2)),
         f"ttr_mae_s_last_{near_s:g}s": float(near_err.mean()) if len(near_err) else float("nan"),
@@ -342,6 +346,6 @@ def evaluate_runaway_model(result: RunawayTrainResult, df: pd.DataFrame,
         "median_warning_s": float(warnings.median()) if len(warnings) else float("nan"),
         "p10_warning_s": float(warnings.quantile(0.1)) if len(warnings) else float("nan"),
         "early_alarm_rate": float((warnings > horizon_s).sum() / len(run)) if len(run) else float("nan"),
-        "false_alarm_rate": float(cens["false_alarm"].mean()) if len(cens) else float("nan"),
+        "false_alarm_rate": float(cens_eval["false_alarm"].mean()) if len(cens_eval) else float("nan"),
     }
     return {"metrics": metrics, "per_episode": per_episode}
